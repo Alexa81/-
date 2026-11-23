@@ -35,3 +35,13 @@ If UPDATE reports **MOONAR 0.7.6 fully up to date**, both installed files passed
 Do not delete older JSFX instances or user presets during troubleshooting.
 
 **Testing:** GitHub file contents and checksums have been verified. End-to-end audio output, local macOS permissions, and REAPER FX refresh behavior have not been tested on the user's computer. The release should be treated as a tested-publication but not a confirmed working audio build.
+
+## If the old UPDATE button does nothing
+
+On macOS, run this one-time verified repair from Terminal:
+
+```sh
+curl -fsSL "https://raw.githubusercontent.com/Alexa81/-/main/moonar/MOONAR_REPAIR_ONCE.sh" -o /tmp/MOONAR_REPAIR_ONCE.sh && /bin/bash /tmp/MOONAR_REPAIR_ONCE.sh
+```
+
+The [repair script](moonar/MOONAR_REPAIR_ONCE.sh) checks for REAPER's standard resource directory, downloads the current Lua UI, JSFX and updater, verifies each SHA-256 digest against [latest.txt](moonar/latest.txt), and installs them with backups. It does not delete presets, FX chains, or older engines. It prints success or a specific error rather than silently quitting. This repair is a one-time escape hatch when the local UPDATE script itself is stale. After it runs, open `MOONAR_RESYNTH_LIVE.lua` from REAPER Actions on the selected track.
