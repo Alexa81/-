@@ -1,6 +1,6 @@
 
 
--- MOONAR RESYNTH 0.7.14 / AUTO EXTENDED PCM WAVEFORM + SERUM CURVE HANDLES + ONE FX PER TRACK + FULL UPDATE AND REPAIR + JSFX COMPILER FIX + SELECTED TRACK + MIDI ROUTING + GITHUB UPDATE BUTTON + RECOVER SILENCE + PREVIEW MIDI + ON-DISK PRESET BANK
+-- MOONAR CURVE LAB 0.8.0 PREVIEW / AUTO EXTENDED PCM WAVEFORM + SERUM CURVE HANDLES + ONE FX PER TRACK + FULL UPDATE AND REPAIR + JSFX COMPILER FIX + SELECTED TRACK + MIDI ROUTING + GITHUB UPDATE BUTTON + RECOVER SILENCE + PREVIEW MIDI + ON-DISK PRESET BANK
 -- Companion ReaScript UI: real file drag/drop and trim controls; JSFX audio engine.
 -- This is an original instrument, unrelated to Tim Hox's proprietary source code.
 local FX_NAME='MOONAR Curve Lab 0.8.0 Preview'
@@ -1043,7 +1043,7 @@ sprintf(#trans,"%+.0f st",slider39);
 sprintf(#fine,"%+.0f ct",slider8*100);
 sprintf(#vol,"%+.1f dB",slider5);
 labknob(380,864,18,(slider39+24)/48,"TRANSPOSE",#trans,0);
-labknob(583,864,18,(slider8+1)/2,"DETUNE",#fine,0);
+labknob(583,864,18,(slider8+12)/24,"DETUNE",#fine,0);
 labknob(944,864,24,(slider5+36)/48,"OUTPUT",#vol,0);
 labtext(45,863,slider23<0.5?"NATURAL PCM":"SPECTRAL",15,0.75,0.88,0.86);
 labtext(45,887,slider6<=1?"MONO":"POLY",13,0.68,0.73,0.85);
@@ -1126,7 +1126,7 @@ click ? (
   active_knob==34 ? drag_initial=slider34;
   active_knob==35 ? drag_initial=log(1+slider35/100)/log(321);
   active_knob==39 ? drag_initial=(slider39+24)/48;
-  active_knob==8 ? drag_initial=(slider8+1)/2;
+  active_knob==8 ? drag_initial=(slider8+12)/24;
   active_knob==5 ? drag_initial=(slider5+36)/48;
 );
 mb && active_knob>0 ? (
@@ -1144,7 +1144,7 @@ mb && active_knob>0 ? (
   active_knob==34 ? slider34=norm;
   active_knob==35 ? slider35=100*(321^norm-1);
   active_knob==39 ? slider39=floor(-24+48*norm+0.5);
-  active_knob==8 ? slider8=-1+2*norm;
+  active_knob==8 ? slider8=-12+24*norm;
   active_knob==5 ? slider5=-36+48*norm;
   active_knob==40 ? slider1=max(0,min(32000,slider1+(mx-(57+431*(slider1/1000)/max(1,(slider1+slider2+slider4)/1000+0.65)))*8));
   active_knob==41 ? slider2=max(0,min(32000,slider2+(mx-(57+431*((slider1+slider2)/1000)/max(1,(slider1+slider2+slider4)/1000+0.65)))*8));
@@ -1170,14 +1170,14 @@ mb && active_knob>0 ? (
   active_knob==30 ? sliderchange(2^29);
   active_knob==31 ? sliderchange(2^30);
   active_knob==32 || active_knob==50 ? sliderchange(2^31);
-  active_knob==33 || active_knob==51 ? sliderchange(2^32);
-  active_knob==34 || active_knob==55 ? sliderchange(2^33);
-  active_knob==35 || active_knob==52 ? sliderchange(2^34);
-  active_knob==39 ? sliderchange(2^38);
+  active_knob==33 || active_knob==51 ? sliderchange(-1);
+  active_knob==34 || active_knob==55 ? sliderchange(-1);
+  active_knob==35 || active_knob==52 ? sliderchange(-1);
+  active_knob==39 ? sliderchange(-1);
   active_knob==43 ? sliderchange(2^23);
   active_knob==44 ? sliderchange(2^24);
-  active_knob==53 ? sliderchange(2^35);
-  active_knob==54 ? sliderchange(2^36);
+  active_knob==53 ? sliderchange(-1);
+  active_knob==54 ? sliderchange(-1);
 );
 !mb ? active_knob=0;
 lab_oldmb=mb;
@@ -1723,7 +1723,7 @@ local function prepare_track()
   if not track then
     reaper.InsertTrackAtIndex(reaper.CountTracks(0),true)
     track=reaper.GetTrack(0,reaper.CountTracks(0)-1)
-    reaper.GetSetMediaTrackInfo_String(track,'P_NAME','MOONAR RESYNTH | MIDI IN',true)
+    reaper.GetSetMediaTrackInfo_String(track,'P_NAME','MOONAR CURVE LAB | MIDI IN',true)
     new_track=true
   end
   fx=moonar_add_engine(track)
@@ -1760,7 +1760,7 @@ local function recover_audio_route()
   -- Enable MIDI monitoring on the chosen instrument track. Do not change
   -- unrelated tracks or reset a custom hardware MIDI input on every launch.
   if reaper.GetSelectedTrack(0,0)==track or
-     (tn or ''):find('MOONAR RESYNTH | MIDI IN',1,true) then
+     (tn or ''):find('MOONAR CURVE LAB | MIDI IN',1,true) then
     reaper.SetMediaTrackInfo_Value(track,'I_RECARM',1)
     reaper.SetMediaTrackInfo_Value(track,'I_RECMON',1)
     local current_input=reaper.GetMediaTrackInfo_Value(track,'I_RECINPUT')
