@@ -1,34 +1,37 @@
-# MOONAR RESYNTH — automatic GitHub updates
+# MOONAR RESYNTH — GitHub updates and whole-plugin repair
 
-Public source code for the REAPER/macOS MOONAR RESYNTH prototype.
+MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
 
-**Published Lua UI:** v0.7.5. **DSP:** JSFX 0.6.2 is bundled with the new Lua controller and installed when the new UI starts.
+**Latest release: MOONAR 0.7.6** (interface) + **JSFX 0.6.2** (audio engine).
 
-## Automatic updates — one-time setup
+## UPDATE button
 
-Open macOS Terminal and run this one-time setup command:
+Select the target track in REAPER, open the MOONAR LIVE interface, and click **UPDATE**.
 
-```sh
-curl -fsSL "https://raw.githubusercontent.com/Alexa81/-/main/moonar/MOONAR_GITHUB_SETUP.sh" | /bin/bash
-```
+- The existing 0.7.5 updater sees 0.7.6 and installs the new controller, without closing REAPER.
+- The 0.7.6 controller automatically installs its bundled **MOONAR UPDATE 1.3** script locally on startup, making future updates and repairs one-click.
+- Starting with updater 1.3, pressing UPDATE verifies **both** the Lua UI and the JSFX engine against `latest.txt` SHA-256 checksums, including when the UI is already the latest version.
+- Missing or corrupted components are downloaded and repaired, each with a backup of the previous file.
+- On the selected track, the updater looks for the latest compatible JSFX. If only a legacy MOONAR is attached, it attempts to add the new engine. It preserves the previous FX and does not delete presets.
+- After a repair, the updater reopens MOONAR LIVE on the selected track; REAPER itself stays open.
 
-This installs a per-user macOS LaunchAgent that checks GitHub **about every 15 minutes**, even if REAPER is closed. It does not require downloading a ZIP, manually copying Lua files, or quitting REAPER. It fetches the newest controller and verifies the SHA-256 checksum from [latest.txt](moonar/latest.txt), backs up your previous controller, then atomically installs the new Lua file in the REAPER Scripts directory. The existing live interface detects on-disk updates and restarts its own Lua GUI if already running. The updater is initially launched by macOS at installation.
+The separate JSFX instrument needs sample audio plus MIDI notes to make sound. Updating the files alone does **not** prove audio output is functioning.
 
-The background updater replaces only the Lua controller. Upon startup, MOONAR v0.7.5 installs a separately named JSFX 0.6.2 beside the old 0.6.1 engine, preserving previous files and user presets. The EEL2 parser error at line 467 was addressed in source; audio playback on a real Mac has not yet been verified.
+## Source links
 
-Files:
-- [moonar/latest.txt](moonar/latest.txt) — current version and expected SHA-256
-- [moonar/MOONAR_GITHUB_SETUP.sh](moonar/MOONAR_GITHUB_SETUP.sh) — one-time macOS installation
-- [moonar/MOONAR_AUTOUPDATE.sh](moonar/MOONAR_AUTOUPDATE.sh) — background update checker
-- [moonar/MOONAR_UPDATE.lua](moonar/MOONAR_UPDATE.lua) — manual Update action and GUI button
-- [v0.7.5 Lua interface](moonar/releases/v0.7.5/MOONAR_RESYNTH_LIVE.lua)
+- [Current manifest](moonar/latest.txt)
+- [Whole-plugin UPDATE 1.3](moonar/MOONAR_UPDATE.lua)
+- [MOONAR LIVE 0.7.6](moonar/releases/v0.7.6/MOONAR_RESYNTH_LIVE.lua)
+- [JSFX 0.6.2](moonar/releases/v0.7.6/MOONAR_Resynth_062.jsfx)
+- [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
+- [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
 
-To check the update log after installing, open:
-`~/Library/Application Support/REAPER/MOONAR_RESYNTH/autoupdate.log`
+## Troubleshooting
 
-To disable the background updater on macOS, remove the corresponding LaunchAgent after booting it out:
-`launchctl bootout gui/$(id -u)/com.moonar.resynth.autoupdate`.
+If UPDATE reports **Already current, 0.7.5**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
 
-**Testing status:** Lua syntax parsing and release checksums passed; GitHub files were verified. A running REAPER audio test has not yet been completed on the user's Mac.
+If UPDATE reports **MOONAR 0.7.6 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.2 Syntax Fixed` is enabled in its FX chain, import a sample, and send MIDI.
 
-The instrument is an independent prototype, not Tim Hox's proprietary RESYNTH source code.
+Do not delete older JSFX instances or user presets during troubleshooting.
+
+**Testing:** GitHub file contents and checksums have been verified. End-to-end audio output, local macOS permissions, and REAPER FX refresh behavior have not been tested on the user's computer. The release should be treated as a tested-publication but not a confirmed working audio build.
