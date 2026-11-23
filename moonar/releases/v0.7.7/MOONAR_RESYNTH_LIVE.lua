@@ -2668,6 +2668,8 @@ local function frame()
     end
   end
   if reaper.GetExtState and reaper.GetExtState(live_namespace,'CURRENT_UI')~=live_token then
+    -- A newer LIVE window replaced this one; never leave its held MIDI note stuck.
+    stop_audition()
     gfx.quit();return
   end
   -- Poll once every ~90 GUI frames: existing UI survives ordinary edits,
