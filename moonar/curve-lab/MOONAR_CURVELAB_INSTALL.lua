@@ -76,20 +76,22 @@ for _,record in ipairs(specs) do
     fail('Unsafe or incomplete manifest field: '..key,staged);return
   end
   local current=read(target)
+  local identical=false
   if current then
     local existing=sha256(target)
-    if existing and existing==wanted:lower() then goto continue end
+    identical=existing and existing==wanted:lower()
   end
-  local entry={kind=key,target=target,stage=target..'.curve_lab_verified_stage',old=current}
-  local dl,why=download(path,entry.stage)
-  if not dl then fail('Download '..key..' failed: '..tostring(why),staged);return end
-  local checksum,reason=sha256(entry.stage)
-  if checksum~=wanted:lower() then
+  if not identical then
+    local entry={kind=key,target=target,stage=target..'.curve_lab_verified_stage',old=current}
+    local dl,why=download(path,entry.stage)
+    if not dl then fail('Download '..key..' failed: '..tostring(why),staged);return end
+    local checksum,reason=sha256(entry.stage)
+    if checksum~=wanted:lower() then
+      staged[#staged+1]=entry
+      fail('Checksum mismatch: '..key..' ('..tostring(reason or checksum)..')',staged);return
+    end
     staged[#staged+1]=entry
-    fail('Checksum mismatch: '..key..' ('..tostring(reason or checksum)..')',staged);return
   end
-  staged[#staged+1]=entry
-  ::continue::
 end
 for _,entry in ipairs(staged) do
   if entry.old then
