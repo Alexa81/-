@@ -1,38 +1,45 @@
-# MOONAR Curve Lab v0.8.1-preview — single-window Drag & Drop fix
+# MOONAR Curve Lab v0.8.2-preview — the NEW synthesizer
 
-This experimental version restores the **one visible Lua instrument interface** with native drag-and-drop from Finder and the built-in file picker. Its **one JSFX DSP engine** runs invisibly in the track FX chain. All 39 native JSFX parameter sliders are hidden (but still available to the DSP and host automation). It is **not** a VST3 plug-in.
+This experimental synth is **separate from** the original red MOONAR 0.7.14, which is preserved on `main` and in branch `moonar-v0.7.14-preserved`.
 
-## Changes from 0.8.0
+## Interface
+The new single **midnight violet** Lua-gfx interface was built to match the agreed visual direction, not the old red MOONAR shell. Both envelopes appear simultaneously:
 
-- Restored REAPER Lua `gfx.getdropfile(0)` in the real MOONAR window; drop WAV/AIFF/FLAC onto the window.
-- Removed the second graphical JSFX interface. Only the Lua gfx window is shown when the script runs.
-- Prefixed the names of all 39 JSFX sliders with `-`, the documented REAPER hidden parameter syntax.
-- Added an independent **FILTER** tab (Moog-style low-pass cutoff, resonance, drive, envelope depth, editable Filter ADSR and bend handles). The **AMP** tab preserves the existing MOONAR volume ADSR and audio rendering.
-- Original 26 parameters, resynthesis engine, MIDI support, loop, spectral mode, pitch, saved presets, and waveform trim from v0.7.14 remain.
-- **UPDATE** in the Lua window uses the separate Curve Lab manifest at [latest.txt](latest.txt).
-- This is a 4-pole lowpass approximation; it does not claim to be the proprietary Moog circuit.
+- **AMP ENVELOPE** (left): volume ADSR, edit stage points and bend handles. Separate A, D, S, R knobs.
+- **MOOG-STYLE FILTER** (middle): a four-pole resonant lowpass approximation with Cutoff, Resonance, Drive and Envelope Amount; Filter On/Off.
+- **FILTER ENVELOPE** (right): separate per-voice filter ADSR, stage and bend handles, plus A, D, S, R knobs.
+- **SOURCE SAMPLE** waveform at the top with native Finder drag/drop, LOAD SAMPLE, trimming and zoom.
+- **PRESETS**, **MORE**, and **UPDATE** at top right.
+- **TRANSPOSE**, **FINE DETUNE**, **OUTPUT**, MONO/POLY and TEST NOTE in the bottom section.
 
-## Install the preview
+The original 26 DSP sliders retain their indices; 13 new parameters (27–39) stay separate. The 39 JSFX sliders are hidden from the host's ordinary display, while REAPER and the Lua controller can still manipulate them.
 
-1. Save your REAPER project first.
-2. Download [MOONAR_CURVELAB_INSTALL.lua](MOONAR_CURVELAB_INSTALL.lua) using GitHub **Raw**.
-3. In REAPER use **Actions → Show action list → New action → Load ReaScript** and select the installer. Run it once.
-4. The installer fetches and checksum-verifies both Curve Lab files, installs the JSFX under Effects and the Lua script under Scripts, then launches the one visible GUI. If it does not open, run `MOONAR_CURVELAB_LIVE.lua` from the Actions list.
-5. Drag an audio file from Finder into the **MOONAR CURVE LAB 0.8.1** window, or click **LOAD SAMPLE**. Do **not** drop onto the headless JSFX FX-chain window.
-6. Click **FILTER** for the Moog-style filter and its own ADSR. Click **AMP** for the volume ADSR. Use **UPDATE** on the upper toolbar for future Curve Lab versions.
+## Single synth architecture
 
-## Isolation and rollback
+Exactly one named JSFX engine (`MOONAR_CurveLab_080.jsfx`) handles resynthesis, MIDI, voices and audio. **Only one Lua-gfx window** is displayed; JSFX has no second `@gfx` UI. The Lua window has `gfx.getdropfile(0)` to accept files dragged from Finder.
 
-- Original [MOONAR 0.7.14](../releases/v0.7.14) has **not been modified**.
-- An archived copy of the original release is on branch `moonar-v0.7.14-preserved`.
+The JSFX engine is unchanged from 0.8.1 in this 0.8.2 update so an existing Curve Lab track will not need a second audio engine. The filter algorithm is a 4-pole lowpass approximation, not a hardware-identical Moog simulation.
+
+## Installation and updating
+
+1. **Save your REAPER project.**
+2. If Curve Lab 0.8.1 is already installed, click **UPDATE** in its upper toolbar. The independent update manifest `moonar/curve-lab/latest.txt` now points to 0.8.2-preview.
+3. For a new installation, download [MOONAR_CURVELAB_INSTALL.lua](MOONAR_CURVELAB_INSTALL.lua) using **Raw**. In REAPER open **Actions → Show action list → New action → Load ReaScript** and run the installer.
+4. Drag a WAV/AIFF/FLAC from Finder into the **MOONAR CURVE LAB** Lua window (not into REAPER FX Chain), or use **LOAD SAMPLE**.
+5. Use the new simultaneous AMP/FILTER panels; use **PRESETS** to manage your sounds and **MORE** for the original secondary synthesis parameters.
+
+## Isolation / rollback
+
+- Original MOONAR 0.7.14 source unchanged.
 - Original `moonar/latest.txt` still points to 0.7.14.
-- Curve Lab has its own FX name, script, update manifest, global-memory bus and preset folder.
-- Curve Lab's old presets remain in its independent directory. The installer does not delete preset files.
+- Curve Lab has its own controller, FX, memory bridge, preset bank and update channel.
+- The original saved presets and old release remain available.
 
-**Testing status:** Code and release paths have been inspected; the GUI and DSP have **not been run on the user's macOS/REAPER**, so real-time drag/drop, JSFX compilation and audio output still require hands-on testing. If a problem persists, send the first REAPER console/compiler error.
+**Test status:** Changes are committed to GitHub and release paths/structure checked. REAPER/macOS runtime behavior, audio sound quality, gesture responsiveness and file drop must be tested by running on your Mac; do not treat this preview as production-tested.
 
-## Source files
+## Source
 
-- [Lua single-window UI](v0.8.1-preview/MOONAR_CURVELAB_LIVE.lua)
-- [Headless JSFX DSP](v0.8.1-preview/MOONAR_CurveLab_080.jsfx)
+- [v0.8.2-preview Lua window](v0.8.2-preview/MOONAR_CURVELAB_LIVE.lua)
+- [v0.8.2-preview JSFX audio engine](v0.8.2-preview/MOONAR_CurveLab_080.jsfx)
+- [Installer](MOONAR_CURVELAB_INSTALL.lua)
 - [Independent updater](MOONAR_CURVELAB_UPDATE.lua)
