@@ -1,6 +1,6 @@
 
 
--- MOONAR CURVE LAB 0.8.1 PREVIEW / AUTO EXTENDED PCM WAVEFORM + SERUM CURVE HANDLES + ONE FX PER TRACK + FULL UPDATE AND REPAIR + JSFX COMPILER FIX + SELECTED TRACK + MIDI ROUTING + GITHUB UPDATE BUTTON + RECOVER SILENCE + PREVIEW MIDI + ON-DISK PRESET BANK
+-- MOONAR CURVE LAB 0.8.2 PREVIEW / AUTO EXTENDED PCM WAVEFORM + SERUM CURVE HANDLES + ONE FX PER TRACK + FULL UPDATE AND REPAIR + JSFX COMPILER FIX + SELECTED TRACK + MIDI ROUTING + GITHUB UPDATE BUTTON + RECOVER SILENCE + PREVIEW MIDI + ON-DISK PRESET BANK
 -- Companion ReaScript UI: real file drag/drop and trim controls; JSFX audio engine.
 -- This is an original instrument, unrelated to Tim Hox's proprietary source code.
 local FX_NAME='MOONAR Curve Lab 0.8.1 Preview'
@@ -2447,19 +2447,8 @@ local function frame()
     gfx.getdropfile(-1)
     import_path(fn)
   end
-  mx=(gfx.mouse_x-origin_x)/render_scale
-  my=(gfx.mouse_y-origin_y)/render_scale
-  local clicked=(gfx.mouse_cap & 1)~=0 and not did_mouse_down
-  if clicked and mx>=795 and mx<897 and my>=431 and my<=465 then
-    curve_tab='AMP';did_mouse_down=true
-  elseif clicked and mx>=905 and mx<=1017 and my>=431 and my<=465 then
-    curve_tab='FILTER';did_mouse_down=true
-  elseif curve_tab=='FILTER' and my>=427 and my<=910 then
-    handle_curve_mouse()
-  else
-    handle_mouse()
-  end
-  draw_one()
+  new_mouse()
+  draw_new()
   gfx.update()
   reaper.defer(frame)
 end
@@ -2532,5 +2521,5 @@ if type(reaper.TrackFX_Show)=='function' then
   reaper.TrackFX_Show(track,fx,2)
 end
 local _,bound_track_name=reaper.GetSetMediaTrackInfo_String(track,'P_NAME','',false)
-gfx.init('MOONAR CURVE LAB 0.8.1 | '..((bound_track_name and bound_track_name~='') and bound_track_name or 'Selected track'),1080,930,0,110,70)
+gfx.init('MOONAR CURVE LAB 0.8.2 | '..((bound_track_name and bound_track_name~='') and bound_track_name or 'Selected track'),1080,930,0,110,70)
 reaper.defer(frame)
