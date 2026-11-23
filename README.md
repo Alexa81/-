@@ -2,7 +2,7 @@
 
 MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
 
-**Latest release: MOONAR 0.7.10** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine unchanged).
+**Latest release: MOONAR 0.7.11** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine unchanged).
 
 ## UPDATE button
 
@@ -21,8 +21,8 @@ The separate JSFX instrument needs sample audio plus MIDI notes to make sound. U
 
 - [Current manifest](moonar/latest.txt)
 - [Whole-plugin UPDATE 1.4](moonar/MOONAR_UPDATE.lua)
-- [MOONAR LIVE 0.7.10](moonar/releases/v0.7.10/MOONAR_RESYNTH_LIVE.lua)
-- [JSFX 0.6.4](moonar/releases/v0.7.10/MOONAR_Resynth_064.jsfx)
+- [MOONAR LIVE 0.7.11](moonar/releases/v0.7.11/MOONAR_RESYNTH_LIVE.lua)
+- [JSFX 0.6.4](moonar/releases/v0.7.11/MOONAR_Resynth_064.jsfx)
 - [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
 - [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
 
@@ -62,6 +62,10 @@ In the custom MOONAR LIVE ADSR panel, the DECAY position now has **two linked am
 SUSTAIN is a separate gain-level control. Dragging the DECAY guides does not adjust SUSTAIN. Dragging the Sustain/Note Off node still controls its vertical level, while the Release endpoint separately controls release time.
 
 The two DECAY dots are **time-position guides**, not two separate ADSR stages. The gain curve remains the actual ADSR attack-decay-sustain-release envelope. This version changes the custom Lua GUI only; the JSFX 0.6.4 audio engine and user presets are unchanged.
+
+## DECAY: only the original two handles (0.7.11)
+
+The paired **top and bottom** DECAY points remain linked and both move left/right when DECAY changes. The unwanted **third dot at the intersection with the Sustain level** has been removed. The actual envelope still joins the Sustain line at that level; no extra node is displayed or introduced. Decay time adjustment does not change Sustain. Audio JSFX 0.6.4 is unchanged.
 
 ## Troubleshooting
 
