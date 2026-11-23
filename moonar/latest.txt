@@ -1,6 +1,6 @@
-version=0.7.11
-controller=moonar/releases/v0.7.11/MOONAR_RESYNTH_LIVE.lua
-sha256=3deb2ce76573ce05c023f07fb8e94b582bc788cd61f925a3c22765f760ce8d58
-engine=moonar/releases/v0.7.11/MOONAR_Resynth_064.jsfx
-engine_sha256=91d4a39021bdde45147b08b78fdb41371be635c3cfa743b0cd5d6a3b26e9782d
+version=0.7.12
+controller=moonar/releases/v0.7.12/MOONAR_RESYNTH_LIVE.lua
+sha256=6c7acbc629170d3cefbe99c03b7d4858ddb9bc44ddb19b7d0cc47998e3f47f5d
+engine=moonar/releases/v0.7.12/MOONAR_Resynth_065.jsfx
+engine_sha256=c9c7d154fbf996124d4395b7b6b1314573ed3c32b0c87fb7d6c7df52e601ff05
 updater_sha256=f9841911c9057b17c3caf9123adda156ea7c024dbdfdbd51786af822fb099647
