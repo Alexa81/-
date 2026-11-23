@@ -140,8 +140,66 @@ for _,part in ipairs(components) do
     changes[#changes+1]=part
   end
 end
+-- Repair the selected track's FX instance too. File-level "up to date" is NOT
+-- sufficient when an older broken 0.6.1 instance is still in the FX chain.
+local function activate_selected_engine()
+  if not reaper.GetSelectedTrack or not reaper.TrackFX_GetCount then return false,'No track API' end
+  local track=reaper.GetSelectedTrack(0,0)
+  if not track then return false,'No selected track' end
+  local modern,old=-1,-1
+  for i=0,reaper.TrackFX_GetCount(track)-1 do
+    local ok,name=reaper.TrackFX_GetFXName(track,i,'')
+    if ok and name then
+      if name:find('MOONAR Resynth 0.6.2',1,true) then modern=i end
+      if name:find('MOONAR Resynth',1,true) and not name:find('0.6.2',1,true) then old=i end
+    end
+  end
+  if modern>=0 then
+    local enabled=reaper.TrackFX_GetEnabled and reaper.TrackFX_GetEnabled(track,modern)
+    if enabled==false and reaper.TrackFX_SetEnabled then
+      reaper.TrackFX_SetEnabled(track,modern,true)
+    end
+    if type(reaper.TrackFX_SetOffline)=='function' then reaper.TrackFX_SetOffline(track,modern,false) end
+    return enabled==false,'JSFX 0.6.2 present and enabled'
+  end
+  if old<0 then return false,'Selected track has no MOONAR FX' end
+  if type(reaper.EnumInstalledFX)=='function' then pcall(reaper.EnumInstalledFX,-1) end
+  local names={'JS: MOONAR Resynth 0.6.2 Syntax Fixed','JS: MOONAR_Resynth_062',
+    'JS: MOONAR_Resynth_062.jsfx'}
+  for _,name in ipairs(names) do
+    local id=reaper.TrackFX_AddByName(track,name,false,1)
+    if id and id>=0 then
+      local ok,loaded=reaper.TrackFX_GetFXName(track,id,'')
+      if ok and loaded and loaded:find('MOONAR Resynth 0.6.2',1,true) then
+        if reaper.TrackFX_GetParam and reaper.TrackFX_SetParam then
+          for i=0,21 do
+            if i~=10 then
+              local v=reaper.TrackFX_GetParam(track,old,i)
+              if v~=nil then reaper.TrackFX_SetParam(track,id,i,v) end
+            end
+          end
+        end
+        if reaper.TrackFX_SetEnabled then reaper.TrackFX_SetEnabled(track,id,true) end
+        if type(reaper.TrackFX_SetOffline)=='function' then reaper.TrackFX_SetOffline(track,id,false) end
+        -- Leave the old FX in place, not deleted or bypassed, until Lua
+        -- imports the sample into the new engine on the selected track.
+        return true,'Attached JSFX 0.6.2 to selected track; load sample to activate'
+      end
+    end
+  end
+  return false,'JSFX file installed; REAPER FX browser may need refresh (F5)'
+end
+local function open_live()
+  local script=scripts..SEP..'MOONAR_RESYNTH_LIVE.lua'
+  local action=reaper.AddRemoveReaScript(true,0,script,true)
+  if action and action>0 then
+    reaper.defer(function()reaper.Main_OnCommand(action,0)end)
+  end
+end
 if #changes==0 then
-  message('MOONAR RESYNTH '..version..' is fully up to date.\nLua interface: verified.\nJSFX engine: verified.\nNo repairs needed.')
+  local needs_restart,status=activate_selected_engine()
+  message('MOONAR RESYNTH '..version..' verified.\nLua interface: OK.\nJSFX engine file: OK.\nSelected track: '..status)
+  if needs_restart then open_live() end
   return
 end
 for _,part in ipairs(changes) do
@@ -168,16 +226,16 @@ for _,part in ipairs(changes) do
   completed[#completed+1]=part
 end
 if type(reaper.EnumInstalledFX)=='function' then pcall(reaper.EnumInstalledFX,-1) end
-local action=reaper.AddRemoveReaScript(true,0,scripts..SEP..'MOONAR_RESYNTH_LIVE.lua',true)
+local attached,track_status=activate_selected_engine()
 local fixed={}
 for _,part in ipairs(completed) do fixed[#fixed+1]=part.kind end
 reaper.SetExtState('MOONAR_RESYNTH_LIVE','VERSION',version,true)
 message('MOONAR '..version..' updated / repaired:\n- '..table.concat(fixed,'\n- ')..
-  '\n\nPresets and old JSFX preserved.\nREAPER can stay open.'..
-  '\nReopen MOONAR LIVE on your selected track to activate the engine.')
-if action and action>0 and reaper.GetExtState('MOONAR_RESYNTH_LIVE','CURRENT_UI')=='' then
-  reaper.defer(function()reaper.Main_OnCommand(action,0)end)
-end
+  '\nSelected track: '..track_status..
+  '\n\nPresets and previous JSFX preserved. REAPER stays open.')
+-- Open the newly installed GUI on the selected track so it can reimport any
+-- saved sample path; the existing GUI closes via its single-instance token.
+open_live()
 
 ]======]
 local BUNDLED_JSFX=[===[
