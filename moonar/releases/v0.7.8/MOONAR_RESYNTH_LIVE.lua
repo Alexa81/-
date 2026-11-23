@@ -1700,7 +1700,7 @@ end
 
 -- A 0.6.x legacy FX stays enabled until the new 0.6.1 instrument receives PCM.
 -- This prevents the previous silent upgrade that bypassed the user's old sound.
-local legacy_fx_pending=nil
+local legacy_fx_pending={}
 local function prepare_track()
   if track and reaper.ValidatePtr2(0,track,'MediaTrack*') and fx>=0 then return true end
   local seltrack=reaper.GetSelectedTrack(0,0)
@@ -1738,9 +1738,25 @@ local function prepare_track()
         return false,'MOONAR seamless JSFX is missing. Previous FX left unchanged.'
       end
       fx=new_fx
-      legacy_fx_pending=old_fx
+      legacy_fx_pending={old_fx}
       for i=1,22 do if i~=11 then pset(i,preserved[i]) end end
       status='Old FX preserved until the selected track imports audio to the new FX.'
+    end
+    -- When updater 1.4 has already added the new JSFX, older MOONAR FX
+    -- may still be active in the same chain. Don't let both render the same
+    -- note (audible comb filtering / metallic coloration).
+    -- Keep every older FX intact until the new sample is imported.
+    local seen={}
+    for _,old_fx in ipairs(legacy_fx_pending) do seen[old_fx]=true end
+    for fi=0,reaper.TrackFX_GetCount(track)-1 do
+      if fi~=fx and not seen[fi] then
+        local _,name=reaper.TrackFX_GetFXName(track,fi,'')
+        if name and name:find('MOONAR Resynth',1,true) and
+           reaper.TrackFX_GetEnabled(track,fi) then
+          legacy_fx_pending[#legacy_fx_pending+1]=fi
+          seen[fi]=true
+        end
+      end
     end
     slot=math.floor((reaper.TrackFX_GetParam(track,fx,10) or 1)+0.5)
     if slot<1 or slot>2 then slot=1;pset(11,slot) end
@@ -1963,10 +1979,12 @@ local function import_audio(audio,display_name)
   write_bridge(audio,model,false)
   -- The new FX has received sample+model data; only now is it safe to
   -- bypass a legacy MOONAR FX. Before this point the old sound remains active.
-  if legacy_fx_pending~=nil and track and
+  if #legacy_fx_pending>0 and track and
      reaper.ValidatePtr2(0,track,'MediaTrack*') then
-    reaper.TrackFX_SetEnabled(track,legacy_fx_pending,false)
-    legacy_fx_pending=nil
+    for _,old_fx in ipairs(legacy_fx_pending) do
+      reaper.TrackFX_SetEnabled(track,old_fx,false)
+    end
+    legacy_fx_pending={}
   end
   view_start,view_span=0,1
   build_wave(audio)
@@ -2018,7 +2036,7 @@ local function save_preset_meta(entry)
   local f,e=io.open(preset_file(entry.id),'wb')
   if not f then return false,tostring(e) end
   f:write(PRESET_HEADER,'\n',preset_safe_line(entry.name),'\n',entry.id,'.wav\n',entry.favorite and '1' or '0','\n')
-  for i=1,22 do
+  for i=1,23 do
     f:write(i>1 and '\t' or '',string.format('%.9g',tonumber(entry.values[i]) or defaults[i] or 0))
   end
   f:write('\n');f:close()
@@ -2038,7 +2056,7 @@ local function parse_preset_meta(id)
   af:close()
   local values={}
   for n in params:gmatch('[^\t]+') do values[#values+1]=tonumber(n) end
-  if #values~=22 then return nil end
+  if #values~=22 and #values~=23 then return nil end
   return {id=id,name=preset_safe_line(name),favorite=favorite=='1',values=values}
 end
 local function scan_preset_bank()
@@ -2130,7 +2148,7 @@ local function save_current_preset()
   local id=make_unique_preset_id()
   if not id then status='Cannot allocate unique preset ID.';return end
   local entry={id=id,name=name,favorite=false,values={}}
-  for i=1,22 do entry.values[i]=val(i) end
+  for i=1,23 do entry.values[i]=val(i) end
   local wok,werr=write_preset_wav(preset_audio_file(id),source)
   if not wok then status='Cannot save preset audio: '..tostring(werr);return end
   local mok,merr=save_preset_meta(entry)
@@ -2150,8 +2168,8 @@ local function load_sound_preset(entry)
   end
   -- The same bank can be loaded on any of the two supported MOONAR tracks.
   -- Do not restore the private shared-memory instance slot (slider11).
-  for i=1,22 do
-    if i~=11 and i~=17 and i~=18 then pset(i,entry.values[i]) end
+  for i=1,23 do
+    if i~=11 and i~=17 and i~=18 then pset(i,entry.values[i] or defaults[i] or 0) end
   end
   local st=clamp(entry.values[17] or 0,0,10000)
   local en=clamp(entry.values[18] or 10000,st+50,10000)
