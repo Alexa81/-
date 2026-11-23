@@ -1745,8 +1745,8 @@ local function moonar_add_engine(tr)
   return -1
 end
 
--- A 0.6.x legacy FX stays enabled until the new 0.6.1 instrument receives PCM.
--- This prevents the previous silent upgrade that bypassed the user's old sound.
+-- An old FX remains until the new instrument imports PCM; after a backup,
+-- redundant MOONAR FX are removed so only one instrument stays on the track.
 local legacy_fx_pending={}
 local function prepare_track()
   if track and reaper.ValidatePtr2(0,track,'MediaTrack*') and fx>=0 then return true end
@@ -1787,7 +1787,7 @@ local function prepare_track()
       fx=new_fx
       legacy_fx_pending={old_fx}
       for i=1,23 do if i~=11 then pset(i,preserved[i]) end end
-      status='Old FX preserved until the selected track imports audio to the new FX.'
+      status='Import PCM to complete the migration to one MOONAR engine.'
     end
     -- When updater 1.4 has already added the new JSFX, older MOONAR FX
     -- may still be active in the same chain. Don't let both render the same
@@ -1798,8 +1798,7 @@ local function prepare_track()
     for fi=0,reaper.TrackFX_GetCount(track)-1 do
       if fi~=fx and not seen[fi] then
         local _,name=reaper.TrackFX_GetFXName(track,fi,'')
-        if name and name:find('MOONAR Resynth',1,true) and
-           reaper.TrackFX_GetEnabled(track,fi) then
+        if name and name:find('MOONAR Resynth',1,true) then
           legacy_fx_pending[#legacy_fx_pending+1]=fi
           seen[fi]=true
         end
@@ -2013,6 +2012,68 @@ local function write_bridge(audio,a,only_model)
   reaper.gmem_write(base+1,version)
   reaper.gmem_write(base,1)
 end
+local function prune_redundant_moonar_after_import()
+  if not track or not reaper.ValidatePtr2(0,track,'MediaTrack*') then return false end
+  -- Current instance stays; previous MOONAR versions (even bypassed ones)
+  -- are backed up and cleaned from THIS track only. Other FX remain intact.
+  local older={}
+  for i=0,reaper.TrackFX_GetCount(track)-1 do
+    if i~=fx then
+      local ok,name=reaper.TrackFX_GetFXName(track,i,'')
+      if ok and name and name:find('MOONAR Resynth',1,true) then
+        older[#older+1]=i
+      end
+    end
+  end
+  if #older==0 then legacy_fx_pending={};return true end
+  -- Prevent doubled sound even if we cannot complete the backup.
+  for _,idx in ipairs(older) do reaper.TrackFX_SetEnabled(track,idx,false) end
+  if type(reaper.GetTrackStateChunk)~='function' or
+     type(reaper.TrackFX_Delete)~='function' then
+    status='Older MOONAR FX bypassed; cleanup unavailable in this REAPER.'
+    return false
+  end
+  local ok,chunk=reaper.GetTrackStateChunk(track,'',false)
+  if not ok or not chunk or #chunk<50 then
+    status='Older MOONAR FX bypassed; project track backup failed.'
+    return false
+  end
+  local dir=reaper.GetResourcePath()..SEP..'MOONAR_RESYNTH'..SEP..'Backups'
+  reaper.RecursiveCreateDirectory(dir,0)
+  local prefix=dir..SEP..'MOONAR_TrackFX_before_cleanup_'..
+    os.date('%Y%m%d_%H%M%S')..'_T'..
+    tostring(math.floor(reaper.GetMediaTrackInfo_Value(track,'IP_TRACKNUMBER') or 0))
+  local backup=prefix..'.RTrackTemplate'
+  local suffix=1
+  while read_all(backup) do
+    backup=prefix..'_'..tostring(suffix)..'.RTrackTemplate'
+    suffix=suffix+1
+  end
+  local file,reason=io.open(backup,'wb')
+  if not file then
+    status='Legacy FX bypassed; backup unavailable: '..tostring(reason)
+    return false
+  end
+  local written,write_reason=file:write(chunk)
+  local closed,close_reason=file:close()
+  if not written or not closed then
+    status='Legacy FX bypassed; backup write failed: '..tostring(write_reason or close_reason)
+    return false
+  end
+  -- Descending index order avoids selecting the wrong FX when deleting.
+  table.sort(older,function(a,b) return a>b end)
+  for _,idx in ipairs(older) do
+    local valid,name=reaper.TrackFX_GetFXName(track,idx,'')
+    if idx~=fx and valid and name and name:find('MOONAR Resynth',1,true) then
+      local deleted=reaper.TrackFX_Delete(track,idx)
+      if deleted~=false and idx<fx then fx=fx-1 end
+    end
+  end
+  legacy_fx_pending={}
+  reaper.UpdateArrange()
+  return true
+end
+
 local function import_audio(audio,display_name)
   local ok,err=prepare_track()
   if not ok then status=err; return end
@@ -2024,15 +2085,9 @@ local function import_audio(audio,display_name)
   if not model then source=oldsrc;status='Cannot analyze: '..tostring(merr);return end
   analysis_result=model
   write_bridge(audio,model,false)
-  -- The new FX has received sample+model data; only now is it safe to
-  -- bypass a legacy MOONAR FX. Before this point the old sound remains active.
-  if #legacy_fx_pending>0 and track and
-     reaper.ValidatePtr2(0,track,'MediaTrack*') then
-    for _,old_fx in ipairs(legacy_fx_pending) do
-      reaper.TrackFX_SetEnabled(track,old_fx,false)
-    end
-    legacy_fx_pending={}
-  end
+  -- PCM and spectral model sent. Back up this track and remove stale
+  -- MOONAR FX so only the current synth remains in the chain.
+  prune_redundant_moonar_after_import()
   view_start,view_span=0,1
   build_wave(audio)
   file_label=display_name or audio.path or 'IMPORTED AUDIO'
