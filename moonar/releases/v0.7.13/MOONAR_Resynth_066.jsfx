@@ -813,7 +813,7 @@ loop(240,
 // Top brand, centered preset chooser, and sample-import help button.
 ui_text(45,30,"MOONAR",43,1,0.98,0.97);
 ui_text(247,42,"RESYNTH",24,0.89,0.93,0.92);
-ui_text(247,73,"NATURAL LOOP / SERUM AHDSR   /   V 0.6.5",11,0.40,0.81,0.75);
+ui_text(247,73,"NATURAL LOOP / CURVED ADSR   /   V 0.6.6",11,0.40,0.81,0.75);
 ui_fill(568,49,305,48,0.04,0.075,0.112,1);
 ui_stroke(568,49,305,48,0.013,0.023,0.039,1);
 ui_text(576,56,"<",25,0.60,0.78,0.91);
@@ -955,28 +955,23 @@ has_sample && clip_end>clip_start ? (
     wi+=1;
   );
 );
-// Serum-like AHDSR display: one common time axis for Attack, Hold,
-// Decay, Sustain (held until MIDI Note Off), and Release.
-atk=slider1/1000;hold=slider24/1000;dec=slider2/1000;rel=slider4/1000;
-sv=10^(slider3/20);
-env_view_s=max(3.6,atk+hold+dec+rel+0.18);
+// Four Serum-style ADSR stages, plus three REAL bend controls.
+// Additional cyan handles only appear when a segment is wide enough.
+atk=slider1/1000;dec=slider2/1000;rel=slider4/1000;sv=10^(slider3/20);
+env_view_s=max(3.6,atk+dec+rel+0.18);
 plot_pps=plotw/env_view_s;
 plot_attack_x=plotx+atk*plot_pps;
-plot_hold_x=plot_attack_x+hold*plot_pps;
-plot_decay_x=plot_hold_x+dec*plot_pps;
-// Display assumes note-off at Decay end. Moving Decay shifts BOTH the
-// decay/sustain point and the lower Release endpoint, just like Serum.
-plot_release_start=plot_decay_x;
+plot_decay_x=plot_attack_x+dec*plot_pps;
 plot_rel_x=plot_decay_x+rel*plot_pps;
-// Piecewise gain follows the same envelope stages as the audio engine.
-// Release uses an exponential curve. No invented top/bottom guide nodes.
+a_shape=exp(-3*slider24);
+d_shape=exp(-3*slider25);
+r_shape=exp(-3*slider26);
 ps=0;pxprev=plotx;pyprev=plotbottom;
-loop(232,
-  xx=plotx+plotw*ps/231;
-  xx<plot_attack_x ? env=max(0,(xx-plotx)/max(0.0001,plot_attack_x-plotx)) :
-  xx<plot_hold_x ? env=1 :
-  xx<plot_decay_x ? env=1-(1-sv)*(xx-plot_hold_x)/max(0.0001,plot_decay_x-plot_hold_x) :
-  xx<plot_rel_x ? env=sv*exp(-6.907755*(xx-plot_decay_x)/max(0.0001,plot_rel_x-plot_decay_x)) : env=0;
+loop(330,
+  xx=plotx+plotw*ps/329;
+  xx<plot_attack_x ? env=((xx-plotx)/max(0.00001,plot_attack_x-plotx))^a_shape :
+  xx<plot_decay_x ? env=1-(1-sv)*(((xx-plot_attack_x)/max(0.00001,plot_decay_x-plot_attack_x))^d_shape) :
+  xx<plot_rel_x ? env=sv*(1-(((xx-plot_decay_x)/max(0.00001,plot_rel_x-plot_decay_x))^r_shape)) : env=0;
   yy=plotbottom-env*plotheight;
   ui_line(xx,yy,xx,plotbottom,0.27,0.65,0.57,0.18);
   ps>0 ? ui_line(pxprev,pyprev,xx,yy,0.98,0.67,0.24,1);
@@ -984,15 +979,22 @@ loop(232,
   ps+=1;
 );
 slider1<=0 ? ui_line(plotx,plotbottom,plotx,plotbottom-plotheight,0.99,0.72,0.32,1);
-slider2<=0 ? ui_line(plot_hold_x,plotbottom-plotheight,plot_decay_x,plotbottom-sv*plotheight,0.99,0.72,0.32,1);
+slider2<=0 ? ui_line(plot_attack_x,plotbottom-plotheight,plot_decay_x,plotbottom-sv*plotheight,0.99,0.72,0.32,1);
 slider4<=0 ? ui_line(plot_decay_x,plotbottom-sv*plotheight,plot_rel_x,plotbottom,0.99,0.72,0.32,1);
 ui_circle(plotx,plotbottom,5,0.97,0.69,0.26,1,1);
 ui_circle(plot_attack_x,plotbottom-plotheight,9,0.97,0.69,0.26,1,1);
-slider24>0 && abs(plot_hold_x-plot_attack_x)>5 ?
-  ui_circle(plot_hold_x,plotbottom-plotheight,8,0.97,0.69,0.26,1,1);
 ui_circle(plot_decay_x,plotbottom-sv*plotheight,9,0.97,0.69,0.26,1,1);
 ui_circle(plot_rel_x,plotbottom,9,0.97,0.69,0.26,1,1);
-ui_text(75,449,"AHDSR ENVELOPE / SERUM TIMELINE",12,0.55,0.68,0.69);
+bend_ax=(plotx+plot_attack_x)*0.5;
+bend_ay=plotbottom-(0.5^a_shape)*plotheight;
+bend_dx=(plot_attack_x+plot_decay_x)*0.5;
+bend_dy=plotbottom-(1-(1-sv)*(0.5^d_shape))*plotheight;
+bend_rx=(plot_decay_x+plot_rel_x)*0.5;
+bend_ry=plotbottom-sv*(1-0.5^r_shape)*plotheight;
+plot_attack_x-plotx>=44 ? ui_circle(bend_ax,bend_ay,6,0.38,0.86,0.96,1,1);
+plot_decay_x-plot_attack_x>=44 && 1-sv>0.015 ? ui_circle(bend_dx,bend_dy,6,0.38,0.86,0.96,1,1);
+plot_rel_x-plot_decay_x>=44 && sv>0.015 ? ui_circle(bend_rx,bend_ry,6,0.38,0.86,0.96,1,1);
+ui_text(75,449,"ADSR / DRAG CYAN DOTS TO BEND ATTACK DECAY RELEASE",12,0.55,0.81,0.82);
 ui_text(76,636,"0",11,0.62,0.67,0.66);
 ti=1;
 loop(3,
@@ -1001,26 +1003,24 @@ loop(3,
   ti+=1;
 );
 slider1>=1000 ? sprintf(#a_val,"%.2f s",slider1/1000) : sprintf(#a_val,"%.0f ms",slider1);
-slider24>=1000 ? sprintf(#h_val,"%.2f s",slider24/1000) : sprintf(#h_val,"%.0f ms",slider24);
 slider2>=1000 ? sprintf(#d_val,"%.2f s",slider2/1000) : sprintf(#d_val,"%.0f ms",slider2);
 sprintf(#s_val,"%.1f dB",slider3);
 slider4>=1000 ? sprintf(#r_val,"%.2f s",slider4/1000) : sprintf(#r_val,"%.0f ms",slider4);
 sprintf(#v_val,"%+.1f dB",slider5);
 ui_knob(190,735,35,log(1+slider1/100)/log(321),"ATTACK",#a_val,0);
-ui_knob(372,735,35,log(1+slider24/100)/log(321),"HOLD",#h_val,0);
-ui_knob(554,735,35,log(1+slider2/100)/log(321),"DECAY",#d_val,0);
-ui_knob(736,735,35,(slider3+48)/48,"SUSTAIN",#s_val,0);
-ui_knob(920,735,35,log(1+slider4/100)/log(321),"RELEASE",#r_val,0);
+ui_knob(372,735,35,log(1+slider2/100)/log(321),"DECAY",#d_val,0);
+ui_knob(554,735,35,(slider3+48)/48,"SUSTAIN",#s_val,0);
+ui_knob(736,735,35,log(1+slider4/100)/log(321),"RELEASE",#r_val,0);
+ui_knob(920,735,35,(slider5+36)/48,"VOLUME",#v_val,1);
 
 // Footer strip with real glide/legato/mode controls.
 ui_panel(44,837,990,65);
 sprintf(#noise_val,"%.0f%%",slider15);
 sprintf(#motion_val,"%.0f%%",slider14);
 sprintf(#glide,"%.0f ms",slider9);
-ui_mini_knob(295,869,(slider5+36)/48,"LEVEL",#v_val);
-ui_mini_knob(416,869,slider15/100,"NOISE",#noise_val);
-ui_mini_knob(537,869,slider14/100,"MOTION",#motion_val);
-ui_mini_knob(658,869,slider9/1000,"GLIDE",#glide);
+ui_mini_knob(335,869,slider15/100,"NOISE",#noise_val);
+ui_mini_knob(471,869,slider14/100,"MOTION",#motion_val);
+ui_mini_knob(610,869,slider9/1000,"GLIDE",#glide);
 ui_button(755,854,112,33,"LEGATO",slider13>0,0);
 ui_button(886,854,74,33,"MONO",slider6<=1,1);
 ui_button(960,854,72,33,"POLY",slider6>1,1);
