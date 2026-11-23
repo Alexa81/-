@@ -1,4 +1,4 @@
--- MOONAR UPDATE 1.0 : REAPER/macOS public GitHub updater
+-- MOONAR UPDATE 1.1 : REAPER/macOS public GitHub updater (OS detection repair)
 -- Fixed publisher: https://github.com/Alexa81/-/tree/main/moonar
 -- Updates ONLY Scripts/MOONAR_RESYNTH_LIVE.lua; NEVER replaces JSFX or user Presets.
 -- Verifies HTTPS download SHA-256 against the manifest, and rejects downgrades.
@@ -56,10 +56,10 @@ local function version_parts(s)
   if not a then return nil end
   return tonumber(a)*1000000+tonumber(b)*1000+tonumber(c)
 end
-if not (reaper.GetOS() or ''):find('OSX',1,true) then
-  alert('This updater is for the macOS build of MOONAR. No files changed.')
-  return
-end
+-- Do not reject a valid Mac solely because REAPER reports a newer OS label
+-- (such as an ARM build). Required macOS tools are validated by ExecProcess
+-- and return a useful error if missing, before any plugin file is changed.
+local osname=tostring((reaper.GetOS and reaper.GetOS()) or 'unknown')
 reaper.RecursiveCreateDirectory(scripts,0)
 reaper.RecursiveCreateDirectory(update_dir,0)
 local manifest_tmp=update_dir..SEP..'latest-download.txt'
