@@ -2496,6 +2496,8 @@ local function draw()
   for segment=0,890 do
     local x=x0+pw*segment/890
     local y=ybot-h*math.max(0,math.min(1,env_gain_at(x)))
+    -- Serum-style filled envelope, separate from the source waveform.
+    line(x,y,x,ybot,.10,.55,.67,.13)
     if oldx then line(oldx,oldy,x,y,.99,.69,.25,1) end
     oldx,oldy=x,y
   end
