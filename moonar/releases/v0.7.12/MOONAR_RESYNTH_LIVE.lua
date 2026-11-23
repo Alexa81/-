@@ -1607,6 +1607,7 @@ local busy=false
 local wave_min,wave_max={},{}
 local UWIN, UH=1080,930
 local mx,my,pressed,drag,drag_initial_y,drag_initial_val=0,0,false,0,0,0
+local drag_initial_x,env_drag_axis=0,nil
 local did_mouse_down=false
 -- Real user preset bank, not the four ADSR-only macros from the reference UI.
 local preset_entries,selected_preset_id,preset_search,preset_scroll,preset_search_focus={},nil,'',0,false
@@ -2610,7 +2611,7 @@ local function handle_mouse()
     gfx.mouse_wheel=0
   end
   if down then
-    drag=0;drag_initial_y=my
+    drag=0;drag_initial_y=my;drag_initial_x=mx;env_drag_axis=nil
     if mx>=69 and mx<=276 and my>=181 and my<=209 then
       preset_search_focus=true;did_mouse_down=held;return
     else
@@ -2656,15 +2657,14 @@ local function handle_mouse()
     end
     if drag==0 and _G.env_points and my>=449 and my<=627 then
       local p=_G.env_points
-      local sustain_y=p[6]-(10^(val(3)/20))*p[7]
-      -- Top & bottom linked Decay markers share one x-coordinate.
-      -- The full guide line is draggable. Sustain remains independent.
-      local decay_guide=math.abs(mx-p[3])<16 and
-        my>=p[6]-p[7]-18 and my<=p[6]+18
-      if math.abs(mx-p[4])<16 and math.abs(my-sustain_y)<26 then drag=33
-      elseif decay_guide then drag=31
-      elseif math.abs(mx-p[2])<13 and math.abs(my-(p[6]-p[7]))<24 then drag=30
-      elseif math.abs(mx-p[5])<13 and math.abs(my-p[6])<24 then drag=32 end
+      local peak_y=p[5]-p[6]
+      local decay_y=p[5]-(10^(val(3)/20))*p[6]
+      -- No invented paired marker handles: a Serum AHDSR graph has an
+      -- Attack peak, optional Hold peak, Decay/Sustain node and Release end.
+      if math.abs(mx-p[4])<15 and math.abs(my-p[5])<22 then drag=43
+      elseif math.abs(mx-p[3])<16 and math.abs(my-decay_y)<23 then drag=42
+      elseif val(24)>0 and math.abs(mx-p[2])<15 and math.abs(my-peak_y)<22 then drag=41
+      elseif math.abs(mx-p[1])<15 and math.abs(my-peak_y)<22 then drag=40 end
     end
     if drag==0 then
       local k=hit_knob(mx,my)
@@ -2742,26 +2742,29 @@ local function handle_mouse()
       end
     elseif _G.env_points then
       local p=_G.env_points
-      local xx_at,xx_dc,xx_rs=p[2],p[3],p[4]
-      local width=p[8]
-      local level=math.max(10^(-48/20),math.min(1,(p[6]-my)/p[7]))
-      local sustain_db=math.max(-48,math.min(0,20*math.log(level,10)))
-      if drag==30 then
-        -- Invert the same nonlinear stage scale used by the graph.
-        local progress=math.max(0,math.min(1,(mx-p[1])/math.max(1,width*0.17)))
-        pset(1,norm_to_ms(progress))
-      elseif drag==31 then
-        -- Horizontal movement of either DEC marker moves BOTH x positions.
-        -- Vertical movement does NOT alter Sustain or change the ADSR gain.
-        local end_of_decay=p[1]+width*0.70
-        local progress=math.max(0,math.min(1,(mx-xx_at)/math.max(1,end_of_decay-xx_at)))
-        pset(2,norm_to_ms(progress))
-      elseif drag==32 then
-        local progress=math.max(0,math.min(1,(mx-xx_rs)/math.max(1,width*0.23)))
-        pset(4,norm_to_ms(progress))
-      elseif drag==33 then
-        -- Note-Off/Sustain handle changes only the level, never the timing.
-        pset(3,sustain_db)
+      local raw_time=(mx-p[7])/math.max(1,p[8])*p[9]*1000
+      local t=math.max(0,raw_time)
+      if drag==40 then
+        pset(1,math.max(0,math.min(32000,t)))
+      elseif drag==41 then
+        pset(24,math.max(0,math.min(32000,t-val(1))))
+      elseif drag==42 then
+        -- DECAY horizontal = time. Vertical drag on the SAME genuine node
+        -- edits Sustain (Serum-style), without adding any extra dot.
+        if not env_drag_axis then
+          local dx,dy=mx-drag_initial_x,my-drag_initial_y
+          if math.max(math.abs(dx),math.abs(dy))>5 then
+            env_drag_axis=math.abs(dy)>math.abs(dx)*1.3 and 'level' or 'time'
+          end
+        end
+        if env_drag_axis=='level' then
+          local gain=math.max(10^(-48/20),math.min(1,(p[5]-my)/p[6]))
+          pset(3,math.max(-48,math.min(0,20*math.log(gain,10))))
+        else
+          pset(2,math.max(0,math.min(32000,t-val(1)-val(24))))
+        end
+      elseif drag==43 then
+        pset(4,math.max(0,math.min(32000,t-val(1)-val(24)-val(2))))
       end
     end
   end
