@@ -16,7 +16,7 @@ local function read_all(path)
   local d=f:read('*a'); f:close(); return d
 end
 local BUNDLED_UPDATER=[======[
--- MOONAR UPDATE 1.4 / WHOLE PLUGIN REPAIR + REAPER macOS + DYNAMIC AUDIO ENGINE
+-- MOONAR UPDATE 1.5 / WHOLE PLUGIN REPAIR + NO DUPLICATE FX INSTANCES
 -- GitHub channel: https://github.com/Alexa81/-/tree/main/moonar
 -- This script repairs the controller AND the JSFX engine independently.
 -- Never modifies preset files or unrelated tracks/effects.
@@ -143,54 +143,30 @@ end
 -- Repair the selected track's FX instance too. File-level "up to date" is NOT
 -- sufficient when an older broken 0.6.1 instance is still in the FX chain.
 local function activate_selected_engine()
-  if not reaper.GetSelectedTrack or not reaper.TrackFX_GetCount then return false,'No track API' end
+  -- IMPORTANT: The updater must NEVER add JSFX to the selected track.
+  -- The GUI owns migration and imports the PCM first. Adding here used to
+  -- leave two MOONAR synthesizers on the same track (sometimes both audible).
+  if not reaper.GetSelectedTrack or not reaper.TrackFX_GetCount then
+    return false,'Track API unavailable'
+  end
   local track=reaper.GetSelectedTrack(0,0)
-  if not track then return false,'No selected track' end
-  local engine_path=effects..SEP..engine_name
-  local engine_source=read(engine_path) or ''
-  local engine_desc=engine_source:match('desc:([^\r\n]+)') or ('MOONAR Resynth '..engine_name)
-  local engine_ident=engine_name:gsub('%.jsfx$','')
-  local modern,old=-1,-1
+  if not track then return false,'No track selected' end
+  local engine_source=read(effects..SEP..engine_name) or ''
+  local engine_desc=engine_source:match('desc:([^\r\n]+)')
+  if not engine_desc then return false,'JSFX file not yet available' end
+  local modern,legacy=0,0
   for i=0,reaper.TrackFX_GetCount(track)-1 do
     local ok,name=reaper.TrackFX_GetFXName(track,i,'')
-    if ok and name then
-      if name:find(engine_desc,1,true) then modern=i end
-      if name:find('MOONAR Resynth',1,true) and not name:find(engine_desc,1,true) then old=i end
+    if ok and name and name:find('MOONAR Resynth',1,true) then
+      if name:find(engine_desc,1,true) then modern=modern+1
+      else legacy=legacy+1 end
     end
   end
-  if modern>=0 then
-    local enabled=reaper.TrackFX_GetEnabled and reaper.TrackFX_GetEnabled(track,modern)
-    if enabled==false and reaper.TrackFX_SetEnabled then
-      reaper.TrackFX_SetEnabled(track,modern,true)
-    end
-    if type(reaper.TrackFX_SetOffline)=='function' then reaper.TrackFX_SetOffline(track,modern,false) end
-    return enabled==false,engine_desc..' present and enabled'
+  if legacy>0 or modern>1 then
+    return true,'MOONAR LIVE will migrate to a single engine after loading sample'
   end
-  if old<0 then return false,'Selected track has no MOONAR FX; launch MOONAR LIVE first' end
-  if type(reaper.EnumInstalledFX)=='function' then pcall(reaper.EnumInstalledFX,-1) end
-  local names={'JS: '..engine_desc, 'JS: '..engine_ident, 'JS: '..engine_name}
-  for _,name in ipairs(names) do
-    local id=reaper.TrackFX_AddByName(track,name,false,1)
-    if id and id>=0 then
-      local ok,loaded=reaper.TrackFX_GetFXName(track,id,'')
-      if ok and loaded and loaded:find(engine_desc,1,true) then
-        if reaper.TrackFX_GetParam and reaper.TrackFX_SetParam then
-          for i=0,21 do
-            if i~=10 then
-              local v=reaper.TrackFX_GetParam(track,old,i)
-              if v~=nil then reaper.TrackFX_SetParam(track,id,i,v) end
-            end
-          end
-        end
-        if reaper.TrackFX_SetEnabled then reaper.TrackFX_SetEnabled(track,id,true) end
-        if type(reaper.TrackFX_SetOffline)=='function' then reaper.TrackFX_SetOffline(track,id,false) end
-        -- Do not delete or bypass the old FX before the new controller
-        -- loads the PCM sample and finishes its live migration.
-        return true,'Added '..engine_desc..'; reopening LIVE to restore sample'
-      end
-    end
-  end
-  return false,'JSFX installed; reopen MOONAR LIVE or refresh FX browser (F5)'
+  if modern==1 then return false,'Only the current MOONAR engine is attached' end
+  return false,'No MOONAR engine on selected track; launch MOONAR LIVE'
 end
 local function open_live()
   local script=scripts..SEP..'MOONAR_RESYNTH_LIVE.lua'
