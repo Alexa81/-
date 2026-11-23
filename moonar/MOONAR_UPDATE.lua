@@ -1,133 +1,162 @@
--- MOONAR UPDATE 1.2 : REAPER/macOS public GitHub updater (OS detection repair)
--- Fixed publisher: https://github.com/Alexa81/-/tree/main/moonar
--- Updates ONLY Scripts/MOONAR_RESYNTH_LIVE.lua; NEVER replaces JSFX or user Presets.
--- Verifies HTTPS download SHA-256 against the manifest, and rejects downgrades.
+-- MOONAR UPDATE 1.3 / WHOLE PLUGIN REPAIR + REAPER macOS
+-- GitHub channel: https://github.com/Alexa81/-/tree/main/moonar
+-- This script repairs the controller AND the JSFX engine independently.
+-- Never modifies preset files or unrelated tracks/effects.
 local SEP=package.config:sub(1,1)
-local resource=reaper.GetResourcePath()
-local scripts=resource..SEP..'Scripts'
-local update_dir=resource..SEP..'MOONAR_RESYNTH'..SEP..'Updates'
-local ui_target=scripts..SEP..'MOONAR_RESYNTH_LIVE.lua'
+local root=reaper.GetResourcePath()
+local scripts=root..SEP..'Scripts'
+local effects=root..SEP..'Effects'
+local work=root..SEP..'MOONAR_RESYNTH'..SEP..'Updates'
 local base='https://raw.githubusercontent.com/Alexa81/-/main/'
-local function alert(msg)
-  reaper.ShowMessageBox(tostring(msg),'MOONAR GITHUB UPDATE',0)
+local function message(s)
+  reaper.ShowMessageBox(tostring(s),'MOONAR UPDATE / REPAIR',0)
 end
 local function read(path)
-  local f=io.open(path,'rb')
-  if not f then return nil end
-  local text=f:read('*a')
-  f:close()
-  return text
+  local f=io.open(path,'rb');if not f then return nil end
+  local data=f:read('*a');f:close();return data
 end
-local function write(path,content)
-  local f,err=io.open(path,'wb')
-  if not f then return nil,err end
-  local ok,write_err=f:write(content)
-  local close_ok,close_err=f:close()
-  if not ok or not close_ok then return nil,write_err or close_err end
+local function write(path,data)
+  local f,e=io.open(path,'wb');if not f then return false,e end
+  local ok,err=f:write(data)
+  local done,err2=f:close()
+  if not ok or not done then return false,err or err2 end
   return true
 end
-local function quoted(value)
-  return "'"..tostring(value):gsub("'", "'\\''").."'"
+local function quote(s)
+  return "'"..tostring(s):gsub("'","'\\''").."'"
 end
 local function exec(command,timeout)
-  if not reaper.ExecProcess then
-    return nil,'REAPER ExecProcess API not available'
-  end
-  -- Official REAPER API returns a single string: "exit_code\noutput".
-  -- A successful curl/shasum command normally returns "0\n" or "0\n...".
-  local raw=reaper.ExecProcess(command,timeout or 30000)
-  if raw==nil then return nil,'REAPER could not launch the command' end
+  if type(reaper.ExecProcess)~='function' then return nil,'ExecProcess API missing' end
+  local raw=reaper.ExecProcess(command,timeout or 45000)
+  if raw==nil then return nil,'Command did not run' end
+  -- REAPER returns one string: "0\nOUTPUT" for exit 0; NOT two return values.
   local code,output=tostring(raw):match('^(%-?%d+)\r?\n(.*)$')
-  if not code then return nil,'Unexpected ExecProcess result: '..tostring(raw) end
+  if not code then return nil,'Unexpected command response: '..tostring(raw) end
   if tonumber(code)~=0 then return nil,'Exit '..code..': '..(output or '') end
   return output or ''
 end
-local function curl(url,path)
-  if not url:match('^https://raw%.githubusercontent%.com/Alexa81/%-/main/moonar/') then
-    return nil,'Rejected unknown download URL'
+local function download(relative,destination)
+  if not relative:match('^moonar/') or relative:find('..',1,true) or
+     relative:find('[^a-zA-Z0-9_./%-]') then
+    return false,'Unsafe release path'
   end
-  local curl_bin='/usr/bin/curl'
-  local _,err=exec(quoted(curl_bin)..' -fsSL --retry 1 --connect-timeout 8 --max-time 25 -o '..quoted(path)..' '..quoted(url),30000)
-  if err then return nil,err end
-  if not read(path) then return nil,'Download did not create a file' end
+  os.remove(destination)
+  local _,err=exec('/usr/bin/curl -fsSL --proto =https --retry 1 --connect-timeout 10 --max-time 35 -o '..
+    quote(destination)..' '..quote(base..relative),45000)
+  if err then return false,err end
+  if not read(destination) then return false,'Downloaded file missing' end
   return true
 end
-local function sha256(path)
-  local output,err=exec("/usr/bin/shasum -a 256 "..quoted(path),15000)
+local function digest(path)
+  local output,err=exec('/usr/bin/shasum -a 256 '..quote(path),15000)
   if err then return nil,err end
-  local value=output and output:match('^([0-9a-fA-F]+)')
-  return value and value:lower() or nil
+  local value=output:match('^([a-fA-F0-9]+)')
+  if not value or #value~=64 then return nil,'Invalid shasum output' end
+  return value:lower()
 end
-local function version_parts(s)
-  local a,b,c=tostring(s or ''):match('^(%d+)%.(%d+)%.(%d+)$')
-  if not a then return nil end
-  return tonumber(a)*1000000+tonumber(b)*1000+tonumber(c)
+local function field(text,key)
+  return text:match('^'..key..'=([^\r\n]+)') or text:match('\n'..key..'=([^\r\n]+)')
 end
--- Do not reject a valid Mac solely because REAPER reports a newer OS label
--- (such as an ARM build). Required macOS tools are validated by ExecProcess
--- and return a useful error if missing, before any plugin file is changed.
-local osname=tostring((reaper.GetOS and reaper.GetOS()) or 'unknown')
+local function healthy(path,expected)
+  local body=read(path)
+  if not body then return false end
+  local hash=digest(path)
+  return hash==expected:lower()
+end
+local function backup(path,old)
+  if not old then return true end
+  local filename=path..'.backup_before_moonar_repair'
+  if not read(filename) then return write(filename,old) end
+  return true
+end
+local function install(stage,target)
+  local ok,err=os.rename(stage,target)
+  if not ok then return false,err end
+  return true
+end
+local function cleanup(items)
+  for _,item in ipairs(items) do if item.stage then os.remove(item.stage) end end
+end
 reaper.RecursiveCreateDirectory(scripts,0)
-reaper.RecursiveCreateDirectory(update_dir,0)
-local manifest_tmp=update_dir..SEP..'latest-download.txt'
-local ok,err=curl(base..'moonar/latest.txt',manifest_tmp)
-if not ok then alert('Cannot check GitHub: '..tostring(err)..'\nNo files changed.');return end
-local manifest=read(manifest_tmp)
-local latest=manifest and manifest:match('version=(%d+%.%d+%.%d+)')
-local path=manifest and manifest:match('controller=([^\r\n]+)')
-local expected=manifest and manifest:match('sha256=([0-9a-fA-F]+)')
-local latest_num=version_parts(latest)
-if not latest_num or not path or not expected or #expected~=64
-  or not path:match('^moonar/releases/v%d+%.%d+%.%d+/MOONAR_RESYNTH_LIVE%.lua$')
-  or not path:find('/v'..latest..'/',1,true) then
-  alert('Invalid manifest from GitHub. No files changed.')
+reaper.RecursiveCreateDirectory(effects,0)
+reaper.RecursiveCreateDirectory(work,0)
+local mf=work..SEP..'latest-repair.txt'
+local ok,err=download('moonar/latest.txt',mf)
+if not ok then message('Cannot check GitHub: '..tostring(err)..'\nNo files changed.');return end
+local m=read(mf)
+local version=field(m,'version')
+local ui=field(m,'controller')
+local ui_hash=field(m,'sha256')
+local jsfx=field(m,'engine')
+local js_hash=field(m,'engine_sha256')
+if not version or not version:match('^%d+%.%d+%.%d+$') or
+   not ui or ui~='moonar/releases/v'..version..'/MOONAR_RESYNTH_LIVE.lua' or
+   not jsfx or not jsfx:match('^moonar/releases/v%d+%.%d+%.%d+/MOONAR_Resynth_%d+%.jsfx$') or
+   not jsfx:find('/v'..version..'/',1,true) or
+   not ui_hash or not ui_hash:match('^[a-fA-F0-9]+$') or #ui_hash~=64 or
+   not js_hash or not js_hash:match('^[a-fA-F0-9]+$') or #js_hash~=64 then
+  message('Invalid update manifest; plugin files were not changed.')
   return
 end
-local installed=read(ui_target)
-local current=installed and installed:match('%-%- MOONAR RESYNTH (%d+%.%d+%.%d+)')
-local current_num=version_parts(current)
-if current_num and latest_num<=current_num then
-  alert('MOONAR RESYNTH '..current..' is already current.\nLatest GitHub version: '..latest..'.')
-  return
-end
-local tmp=update_dir..SEP..'MOONAR_RESYNTH_LIVE.new.lua'
-os.remove(tmp)
-local got,problem=curl(base..path,tmp)
-if not got then alert('Cannot download '..latest..': '..tostring(problem)..'\nNo files changed.');return end
-local actual,hash_error=sha256(tmp)
-if actual~=expected:lower() then
-  os.remove(tmp)
-  alert('SHA-256 verification failed: '..tostring(hash_error or actual)..'.\nNo files changed.')
-  return
-end
-local source=read(tmp)
-if not source or not source:find('%-%- MOONAR RESYNTH '..latest:gsub('%.','%%.')..' ') then
-  os.remove(tmp)
-  alert('Downloaded file version does not match manifest. No files changed.')
-  return
-end
-if installed then
-  local backup=ui_target..'.backup_'..(current or 'previous')
-  if not read(backup) then
-    local saved,save_err=write(backup,installed)
-    if not saved then os.remove(tmp);alert('Backup failed: '..tostring(save_err)..'. No files changed.');return end
+local engine_name=jsfx:match('([^/]+)$')
+local components={
+  {kind='JSFX engine',path=jsfx,target=effects..SEP..engine_name,expected=js_hash},
+  {kind='Lua interface',path=ui,target=scripts..SEP..'MOONAR_RESYNTH_LIVE.lua',expected=ui_hash}
+}
+local changes={}
+for _,part in ipairs(components) do
+  if not healthy(part.target,part.expected) then
+    part.stage=part.target..'.moonar_verified_download'
+    local got,problem=download(part.path,part.stage)
+    if not got then
+      cleanup(components)
+      message('Cannot download '..part.kind..': '..tostring(problem)..'\nNo plugin files changed.')
+      return
+    end
+    local actual,problem_hash=digest(part.stage)
+    if actual~=part.expected:lower() then
+      cleanup(components)
+      message('Checksum failed for '..part.kind..': '..tostring(problem_hash or actual)..'\nNo plugin files changed.')
+      return
+    end
+    changes[#changes+1]=part
   end
 end
-local replaced,rename_err=os.rename(tmp,ui_target)
-if not replaced then
-  alert('Cannot install downloaded version: '..tostring(rename_err)..'\nBackup was preserved.')
+if #changes==0 then
+  message('MOONAR RESYNTH '..version..' is fully up to date.\nLua interface: verified.\nJSFX engine: verified.\nNo repairs needed.')
   return
 end
-local action=reaper.AddRemoveReaScript(true,0,ui_target,true)
-if not action or action<=0 then
-  alert('Updated to '..latest..' but REAPER could not register MOONAR LIVE. Open it from Actions manually.')
-  return
+for _,part in ipairs(changes) do
+  part.old=read(part.target)
+  local saved,why=backup(part.target,part.old)
+  if not saved then
+    cleanup(components)
+    message('Backup failed for '..part.kind..': '..tostring(why)..'\nNo plugin files changed.')
+    return
+  end
 end
-reaper.SetExtState('MOONAR_RESYNTH_LIVE','VERSION',latest,true)
--- The currently running LIVE window watches its script file and restarts itself.
--- Do not automatically open a second copy if that window is already active.
-local live_open=reaper.GetExtState('MOONAR_RESYNTH_LIVE','CURRENT_UI')
-alert('Updated MOONAR RESYNTH to '..latest..'.\n\nREAPER stays open.\nUser presets and JSFX are untouched.\n\nIf the MOONAR window is closed, open MOONAR_RESYNTH_LIVE in Actions.')
-if live_open=='' then
+local completed={}
+for _,part in ipairs(changes) do
+  local installed,problem=install(part.stage,part.target)
+  if not installed then
+    for i=#completed,1,-1 do
+      local prev=completed[i]
+      if prev.old then write(prev.target,prev.old) else os.remove(prev.target) end
+    end
+    cleanup(components)
+    message('Repair aborted: '..tostring(problem)..'. Previous files restored.')
+    return
+  end
+  completed[#completed+1]=part
+end
+if type(reaper.EnumInstalledFX)=='function' then pcall(reaper.EnumInstalledFX,-1) end
+local action=reaper.AddRemoveReaScript(true,0,scripts..SEP..'MOONAR_RESYNTH_LIVE.lua',true)
+local fixed={}
+for _,part in ipairs(completed) do fixed[#fixed+1]=part.kind end
+reaper.SetExtState('MOONAR_RESYNTH_LIVE','VERSION',version,true)
+message('MOONAR '..version..' updated / repaired:\n- '..table.concat(fixed,'\n- ')..
+  '\n\nPresets and old JSFX preserved.\nREAPER can stay open.'..
+  '\nReopen MOONAR LIVE on your selected track to activate the engine.')
+if action and action>0 and reaper.GetExtState('MOONAR_RESYNTH_LIVE','CURRENT_UI')=='' then
   reaper.defer(function()reaper.Main_OnCommand(action,0)end)
 end
