@@ -2,14 +2,14 @@
 
 MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
 
-**Latest release: MOONAR 0.7.7** (interface) + **JSFX 0.6.3 Infinite Sustain** (audio engine).
+**Latest release: MOONAR 0.7.8** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine).
 
 ## UPDATE button
 
 Select the target track in REAPER, open the MOONAR LIVE interface, and click **UPDATE**.
 
-- Existing 0.7.6 updater sees 0.7.7 and installs the new controller and JSFX engine, without closing REAPER.
-- The 0.7.7 controller automatically installs its bundled **MOONAR UPDATE 1.4** script locally on startup, making future updates and repairs one-click.
+- Existing 0.7.7 updater sees 0.7.8 and installs the new controller and JSFX engine, without closing REAPER.
+- The 0.7.8 controller automatically installs its bundled **MOONAR UPDATE 1.4** script locally on startup, making future updates and repairs one-click.
 - Starting with updater 1.4, pressing UPDATE verifies **both** the Lua UI and the JSFX engine against `latest.txt` SHA-256 checksums, including when the UI is already the latest version.
 - Missing or corrupted components are downloaded and repaired, each with a backup of the previous file.
 - On the selected track, the updater looks for the latest compatible JSFX. If only a legacy MOONAR is attached, it attempts to add the new engine. It preserves the previous FX and does not delete presets.
@@ -21,8 +21,8 @@ The separate JSFX instrument needs sample audio plus MIDI notes to make sound. U
 
 - [Current manifest](moonar/latest.txt)
 - [Whole-plugin UPDATE 1.4](moonar/MOONAR_UPDATE.lua)
-- [MOONAR LIVE 0.7.7](moonar/releases/v0.7.7/MOONAR_RESYNTH_LIVE.lua)
-- [JSFX 0.6.3](moonar/releases/v0.7.7/MOONAR_Resynth_063.jsfx)
+- [MOONAR LIVE 0.7.8](moonar/releases/v0.7.8/MOONAR_RESYNTH_LIVE.lua)
+- [JSFX 0.6.4](moonar/releases/v0.7.8/MOONAR_Resynth_064.jsfx)
 - [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
 - [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
 
@@ -32,11 +32,24 @@ Starting in 0.7.7, **HOLD NOTE / C5** in the Lua window sends a MIDI note-on tha
 
 The recorded PCM plays first for natural attack; the JSFX 0.6.3 spectral engine overlaps into a sustained tone earlier, over a longer crossfade window, and keeps oscillators running after the source sample ends. The quality of an individual sample transition depends on that sample's body and spectrum; end-to-end real-time audio on the user's Mac is not yet validated.
 
+
+## Natural Sustain and working fades (0.7.8)
+
+The **NATURAL** mode (default) keeps the imported PCM attack and continues the recorded sample by looping a selected body segment with an adjustable crossfade. This avoids the metallic partial-tone character of static spectral synthesis, but a short or highly changing sound can still exhibit audible loop repetition. The **SPECTRAL** mode remains accessible for comparison.
+
+**Fade In** (top amber handle) ramps the recorded PCM in at the start of a MIDI note. **LOOP FADE** (bottom amber handle or the named button) controls the crossfade between the loop end and start while a note remains held. This is not a fade to silence during sustain; a note ends only after MIDI Note Off and the ADSR **Release**.
+
+The ADSR drawing shows a dedicated Sustain handle where the horizontal segment meets Release. Drag it vertically to change Sustain independently of Decay and Release time. Sustain height and the Sustain knob use a dB-scaled display; the audio engine still converts that dB value to linear gain. Legacy 22-parameter presets remain loadable and new presets can save 23 parameters, including the Natural/Spectral choice.
+
+When switching sound engines on the selected REAPER track, previous MOONAR FX instances are preserved but bypassed after the imported sample has been passed to the newest engine. This avoids accidentally layering an older metallic-sounding engine with the new natural loop.
+
+**Audio quality caveat:** source compatibility and hashes have been checked. Sample-specific looping and end-to-end audio playback must still be validated within REAPER on macOS. The presence of the 0.7.8 version number alone does not verify sound quality.
+
 ## Troubleshooting
 
-If UPDATE reports **Already current, 0.7.6**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
+If UPDATE reports **Already current, 0.7.7**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
 
-If UPDATE reports **MOONAR 0.7.7 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.3 Infinite Sustain` is enabled in its FX chain, import a sample, and send MIDI.
+If UPDATE reports **MOONAR 0.7.8 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
 
 Do not delete older JSFX instances or user presets during troubleshooting.
 
