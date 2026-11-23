@@ -2,7 +2,7 @@
 
 MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
 
-**Latest release: MOONAR 0.7.11** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine unchanged).
+**Latest release: MOONAR 0.7.12** (interface) + **JSFX 0.6.5 Serum AHDSR** (audio engine adds genuine HOLD stage).
 
 ## UPDATE button
 
@@ -21,8 +21,8 @@ The separate JSFX instrument needs sample audio plus MIDI notes to make sound. U
 
 - [Current manifest](moonar/latest.txt)
 - [Whole-plugin UPDATE 1.4](moonar/MOONAR_UPDATE.lua)
-- [MOONAR LIVE 0.7.11](moonar/releases/v0.7.11/MOONAR_RESYNTH_LIVE.lua)
-- [JSFX 0.6.4](moonar/releases/v0.7.11/MOONAR_Resynth_064.jsfx)
+- [MOONAR LIVE 0.7.12](moonar/releases/v0.7.12/MOONAR_RESYNTH_LIVE.lua)
+- [JSFX 0.6.5](moonar/releases/v0.7.12/MOONAR_Resynth_065.jsfx)
 - [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
 - [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
 
@@ -67,11 +67,23 @@ The two DECAY dots are **time-position guides**, not two separate ADSR stages. T
 
 The paired **top and bottom** DECAY points remain linked and both move left/right when DECAY changes. The unwanted **third dot at the intersection with the Sustain level** has been removed. The actual envelope still joins the Sustain line at that level; no extra node is displayed or introduced. Decay time adjustment does not change Sustain. Audio JSFX 0.6.4 is unchanged.
 
+## Serum-style AHDSR envelope — v0.7.12
+
+The previous cosmetic top/bottom DECAY guide pair has been removed entirely. The new graphical editor and JSFX now use Serum's **Attack / Hold / Decay / Sustain / Release** stages on **one common time axis**. Its knob row is **ATK, HOLD, DEC, SUS, REL**, with the master output **LEVEL** retained in the footer.
+
+**The key interaction:** the Decay/Sustain endpoint is at `Attack + Hold + Decay`, and the lower Release endpoint is at `Attack + Hold + Decay + Release`. Increasing or decreasing **DEC** moves both endpoints together by the same time; **REL** moves only the lower endpoint relative to the Decay point. With **SUS = 0 dB**, the Decay point is on the top line while Release ends at the bottom, reproducing the reference Serum screenshot behavior without adding artificial handles.
+
+**HOLD** is a real, independent audio stage in JSFX 0.6.5 (slider 24, range 0–32 seconds), not merely a UI control. The NATURAL sample-loop sustain continues indefinitely until MIDI Note Off. Attack, Hold, Decay and Release are time controls and Sustain is a level. The graph presents an illustrative Note Off at the Decay/Sustain boundary; an actual note can remain in Sustain indefinitely while the MIDI key remains held. Moving the Decay node horizontally edits Decay; moving it vertically edits Sustain, without adding a second node.
+
+A single real-time seconds scale is used. It defaults to a roughly 3.7-second view, automatically expanding to accommodate longer envelopes (up to 32 seconds per time control). As with Serum's locked zoom, an auto-expanded ruler may rescale when longer durations are used.
+
+Existing 22- and 23-parameter sound presets still load. New presets save 24 parameters including HOLD. A separately named JSFX engine is installed and previous engine files are preserved. Before trusting it in a production session, back up the REAPER project and confirm audio operation on your own Mac; UI/engine source consistency and release hashes can be checked remotely, but live DSP behavior cannot be verified here.
+
 ## Troubleshooting
 
-If UPDATE reports **Already current, 0.7.9**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
+If UPDATE reports **Already current, 0.7.11**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
 
-If UPDATE reports **MOONAR 0.7.10 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
+If UPDATE reports **MOONAR 0.7.12 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
 
 Do not delete older JSFX instances or user presets during troubleshooting.
 
