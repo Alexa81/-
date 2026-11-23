@@ -673,12 +673,11 @@ function labknob(x,y,rad,norm,title,value,green) (
 );
 function labenv(x,y,w,h,aa,dd,ss,rr,ca,cd,cr,green) (
   // Sustain display has a deliberately visible hold segment.
-  evsecs=max(1.0,(aa+dd+rr)/1000+0.65);
+  evsecs=max(1.0,(aa+dd+rr)/1000+0.35);
   evscale=w/evsecs;
   evax=x+aa/1000*evscale;
   evdx=evax+dd/1000*evscale;
-  evrx=evdx+max(0.20,0.45*evsecs-(aa+dd)/1000*0.25)*evscale;
-  evrx=min(x+w-rr/1000*evscale,evrx);
+  evrx=evdx+0.35*evscale;
   evend=min(x+w,evrx+rr/1000*evscale);
   evpb=y+h;
   p=0;prevx=x;prevy=evpb;
@@ -853,28 +852,38 @@ click ? (
     labknobdrag(34,870,734,21);
     labknobdrag(35,989,734,21);
     mx>926 && mx<1027 && my>294 && my<331 ? (slider27=1-slider27;sliderchange(2^26);slider_automate(2^26););
-    // Envelope stages and curve bend handles, editable with the mouse.
+    // Graph handles use the SAME coordinates and power curves as the renderer.
     my>350 && my<588 && mx>45 && mx<510 ? (
-      atx=57+431*(slider1/1000)/max(1,(slider1+slider2+slider4)/1000+0.65);
-      ddx=atx+431*(slider2/1000)/max(1,(slider1+slider2+slider4)/1000+0.65);
-      abs(mx-atx)<15 ? active_knob=40;
-      abs(mx-ddx)<15 ? active_knob=41;
-      abs(mx-(57+431))<18 ? active_knob=42;
-      // Midpoint bends are independent of their stage endpoints.
-      abs(mx-(57+atx)*0.5)<10 ? active_knob=43;
-      abs(mx-(atx+ddx)*0.5)<10 ? active_knob=44;
-      // Sustain level drag: click horizontal stage.
-      active_knob==0 && abs(my-(568-203*10^(slider3/20)))<16 ? active_knob=45;
+      asc=431/max(1,(slider1+slider2+slider4)/1000+0.35);
+      ax=57+slider1/1000*asc;
+      dx=ax+slider2/1000*asc;
+      rx=dx+0.35*asc;
+      ex=min(488,rx+slider4/1000*asc);
+      sus=10^(slider3/20);
+      ay=365;dy=568-sus*203;
+      // Mid-curve handles take priority when close to an ADSR stage marker.
+      abs(mx-(57+ax)*0.5)<11 && abs(my-(568-203*0.5^exp(-3*slider24)))<13 ? active_knob=43 :
+      abs(mx-(ax+dx)*0.5)<11 && abs(my-(568-203*(1-(1-sus)*0.5^exp(-3*slider25))))<13 ? active_knob=44 :
+      abs(mx-(rx+ex)*0.5)<11 && abs(my-(568-203*sus*(1-0.5^exp(-3*slider26))))<13 ? active_knob=46 :
+      abs(mx-ax)<15 && abs(my-ay)<18 ? active_knob=40 :
+      abs(mx-dx)<15 && abs(my-dy)<18 ? active_knob=41 :
+      abs(mx-ex)<15 && abs(my-568)<18 ? active_knob=42 :
+      mx>dx && mx<rx && abs(my-dy)<16 ? active_knob=45;
     );
     my>508 && my<670 && mx>556 && mx<1041 ? (
-      fax=569+453*(slider32/1000)/max(1,(slider32+slider33+slider35)/1000+0.65);
-      fdx=fax+453*(slider33/1000)/max(1,(slider32+slider33+slider35)/1000+0.65);
-      abs(mx-fax)<13 ? active_knob=50;
-      abs(mx-fdx)<13 ? active_knob=51;
-      abs(mx-(569+453))<15 ? active_knob=52;
-      abs(mx-(569+fax)*0.5)<10 ? active_knob=53;
-      abs(mx-(fax+fdx)*0.5)<10 ? active_knob=54;
-      active_knob==0 && abs(my-(658-139*slider34))<16 ? active_knob=55;
+      fsc=453/max(1,(slider32+slider33+slider35)/1000+0.35);
+      fax=569+slider32/1000*fsc;
+      fdx=fax+slider33/1000*fsc;
+      frx=fdx+0.35*fsc;
+      fex=min(1022,frx+slider35/1000*fsc);
+      fdy=658-slider34*139;
+      abs(mx-(569+fax)*0.5)<11 && abs(my-(658-139*0.5^exp(-3*slider36)))<13 ? active_knob=53 :
+      abs(mx-(fax+fdx)*0.5)<11 && abs(my-(658-139*(1-(1-slider34)*0.5^exp(-3*slider37))))<13 ? active_knob=54 :
+      abs(mx-(frx+fex)*0.5)<11 && abs(my-(658-139*slider34*(1-0.5^exp(-3*slider38))))<13 ? active_knob=56 :
+      abs(mx-fax)<15 && abs(my-519)<18 ? active_knob=50 :
+      abs(mx-fdx)<15 && abs(my-fdy)<18 ? active_knob=51 :
+      abs(mx-fex)<15 && abs(my-658)<18 ? active_knob=52 :
+      mx>fdx && mx<frx && abs(my-fdy)<16 ? active_knob=55;
     );
   );
   labknobdrag(39,380,864,18);
@@ -932,18 +941,56 @@ mb && active_knob>0 ? (
   active_knob==39 ? slider39=floor(-24+48*norm+0.5);
   active_knob==8 ? slider8=-12+24*norm;
   active_knob==5 ? slider5=-36+48*norm;
-  active_knob==40 ? slider1=max(0,min(32000,slider1+(mx-(57+431*(slider1/1000)/max(1,(slider1+slider2+slider4)/1000+0.65)))*8));
-  active_knob==41 ? slider2=max(0,min(32000,slider2+(mx-(57+431*((slider1+slider2)/1000)/max(1,(slider1+slider2+slider4)/1000+0.65)))*8));
-  active_knob==42 ? slider4=max(0,min(32000,slider4+(mx-1008)*8));
-  active_knob==43 ? slider24=max(-1,min(1,slider24+(mouse_start_y-my)/350));
-  active_knob==44 ? slider25=max(-1,min(1,slider25+(my-mouse_start_y)/350));
+  // Stage points update timing and sustain. Mid-segment bend points update
+  // the same exponent that the DSP applies, not a cosmetic Bezier.
+  asc=431/max(1,(slider1+slider2+slider4)/1000+0.35);
+  ax=57+slider1/1000*asc;
+  dx=ax+slider2/1000*asc;
+  rx=dx+0.35*asc;
+  fsc=453/max(1,(slider32+slider33+slider35)/1000+0.35);
+  fax=569+slider32/1000*fsc;
+  fdx=fax+slider33/1000*fsc;
+  frx=fdx+0.35*fsc;
+  active_knob==40 ? slider1=max(0,min(32000,(mx-57)/asc*1000));
+  active_knob==41 ? slider2=max(0,min(32000,(mx-ax)/asc*1000));
+  active_knob==42 ? slider4=max(0,min(32000,(mx-rx)/asc*1000));
+  active_knob==50 ? slider32=max(0,min(32000,(mx-569)/fsc*1000));
+  active_knob==51 ? slider33=max(0,min(32000,(mx-fax)/fsc*1000));
+  active_knob==52 ? slider35=max(0,min(32000,(mx-frx)/fsc*1000));
   active_knob==45 ? slider3=max(-48,min(0,20*log(max(0.003981,(568-my)/203))/log(10)));
-  active_knob==50 ? slider32=max(0,min(32000,slider32+(mx-(569+453*(slider32/1000)/max(1,(slider32+slider33+slider35)/1000+0.65)))*8));
-  active_knob==51 ? slider33=max(0,min(32000,slider33+(mx-(569+453*((slider32+slider33)/1000)/max(1,(slider32+slider33+slider35)/1000+0.65)))*8));
-  active_knob==52 ? slider35=max(0,min(32000,slider35+(mx-1022)*8));
-  active_knob==53 ? slider36=max(-1,min(1,slider36+(mouse_start_y-my)/350));
-  active_knob==54 ? slider37=max(-1,min(1,slider37+(my-mouse_start_y)/350));
   active_knob==55 ? slider34=max(0,min(1,(658-my)/139));
+  active_knob==43 ? (
+    bendLevel=max(0.000001,min(0.999999,(568-my)/203));
+    powval=log(bendLevel)/log(0.5);
+    slider24=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==44 ? (
+    sus=10^(slider3/20);
+    bendLevel=max(0.000001,min(0.999999,(1-(568-my)/203)/max(0.000001,1-sus)));
+    powval=log(bendLevel)/log(0.5);
+    slider25=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==46 ? (
+    sus=10^(slider3/20);
+    bendLevel=max(0.000001,min(0.999999,1-((568-my)/203)/max(0.000001,sus)));
+    powval=log(bendLevel)/log(0.5);
+    slider26=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==53 ? (
+    bendLevel=max(0.000001,min(0.999999,(658-my)/139));
+    powval=log(bendLevel)/log(0.5);
+    slider36=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==54 ? (
+    bendLevel=max(0.000001,min(0.999999,(1-(658-my)/139)/max(0.000001,1-slider34)));
+    powval=log(bendLevel)/log(0.5);
+    slider37=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==56 ? (
+    bendLevel=max(0.000001,min(0.999999,1-((658-my)/139)/max(0.000001,slider34)));
+    powval=log(bendLevel)/log(0.5);
+    slider38=max(-1,min(1,-log(powval)/3));
+  );
   // Notify REAPER that these visual edits are actual automatable parameters.
   active_knob==1 || active_knob==40 ? sliderchange(2^0);
   active_knob==2 || active_knob==41 ? sliderchange(2^1);
@@ -962,8 +1009,10 @@ mb && active_knob>0 ? (
   active_knob==39 ? sliderchange(-1);
   active_knob==43 ? sliderchange(2^23);
   active_knob==44 ? sliderchange(2^24);
+  active_knob==46 ? sliderchange(2^25);
   active_knob==53 ? sliderchange(-1);
   active_knob==54 ? sliderchange(-1);
+  active_knob==56 ? sliderchange(-1);
 );
 !mb ? active_knob=0;
 lab_oldmb=mb;
