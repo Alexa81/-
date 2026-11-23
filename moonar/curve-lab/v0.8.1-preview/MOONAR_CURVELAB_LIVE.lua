@@ -1987,7 +1987,7 @@ local function draw()
   end
   txt(45,28,'MOONAR',46,.97,.96,.94)
   txt(258,42,'RESYNTH',24,.88,.94,.94)
-  txt(258,73,'V 0.7.14 / CURVED ADSR',11,.49,.84,.79)
+  txt(258,73,'V 0.8.1 / SINGLE WINDOW + DROP SAMPLE',11,.49,.84,.79)
   rect(600,47,266,48,.045,.072,.112,1)
   local chosen=selected_preset_entry()
   txt(612,60,'<  '..((chosen and chosen.name or 'PRESETS'):sub(1,17))..'  >',17,.85,.91,.97)
