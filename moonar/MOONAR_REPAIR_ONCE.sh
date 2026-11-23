@@ -33,7 +33,8 @@ engine_sha="$(field engine_sha256)"
 updater_sha="$(field updater_sha256)"
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   [[ "$controller" != "moonar/releases/v${version}/MOONAR_RESYNTH_LIVE.lua" ]] ||
-  [[ "$engine" != "moonar/releases/v${version}/MOONAR_Resynth_062.jsfx" ]] ||
+  [[ "$engine" != "moonar/releases/v${version}/${engine##*/}" ]] ||
+  ! [[ "${engine##*/}" =~ ^MOONAR_Resynth_[0-9]+\.jsfx$ ]] ||
   ! [[ "$controller_sha" =~ ^[0-9a-f]{64}$ ]] ||
   ! [[ "$engine_sha" =~ ^[0-9a-f]{64}$ ]] ||
   ! [[ "$updater_sha" =~ ^[0-9a-f]{64}$ ]]; then
@@ -41,13 +42,13 @@ if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
 fi
 echo "MOONAR: GitHub latest $version; verifying three components..."
 get "$controller" "$tmp/MOONAR_RESYNTH_LIVE.lua"
-get "$engine" "$tmp/MOONAR_Resynth_062.jsfx"
+get "$engine" "$tmp/${engine##*/}"
 get "moonar/MOONAR_UPDATE.lua" "$tmp/MOONAR_UPDATE.lua"
 verify "$tmp/MOONAR_RESYNTH_LIVE.lua" "$controller_sha"
-verify "$tmp/MOONAR_Resynth_062.jsfx" "$engine_sha"
+verify "$tmp/${engine##*/}" "$engine_sha"
 verify "$tmp/MOONAR_UPDATE.lua" "$updater_sha"
 if ! /usr/bin/grep -Fq -- "-- MOONAR RESYNTH $version /" "$tmp/MOONAR_RESYNTH_LIVE.lua" ||
-  ! /usr/bin/grep -Fq -- "MOONAR_BUILD=0.6.2" "$tmp/MOONAR_Resynth_062.jsfx" ||
+  ! /usr/bin/grep -Fq -- "MOONAR_BUILD=" "$tmp/${engine##*/}" ||
   ! /usr/bin/grep -Fq -- "WHOLE PLUGIN REPAIR" "$tmp/MOONAR_UPDATE.lua"; then
   echo "ERROR: mismatched components. Nothing changed." >&2; exit 5
 fi
@@ -69,7 +70,7 @@ install() {
   echo "MOONAR: $name installed / repaired"
 }
 install MOONAR_UPDATE.lua "$root/Scripts/MOONAR_UPDATE.lua" "$updater_sha"
-install MOONAR_Resynth_062.jsfx "$root/Effects/MOONAR_Resynth_062.jsfx" "$engine_sha"
+install "${engine##*/}" "$root/Effects/${engine##*/}" "$engine_sha"
 install MOONAR_RESYNTH_LIVE.lua "$root/Scripts/MOONAR_RESYNTH_LIVE.lua" "$controller_sha"
 echo "SUCCESS: MOONAR $version components installed/verified."
 echo "Keep REAPER open. Reopen MOONAR_RESYNTH_LIVE in REAPER Actions on the selected track."
