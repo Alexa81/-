@@ -1,5 +1,5 @@
 
-desc:MOONAR Curve Lab 0.8.0 Preview
+desc:MOONAR Curve Lab 0.8.1 Preview
 tags:instrument sampler resynthesis
 options:gmem=MOONAR_CURVELAB_BRIDGE_08 maxmem=3100000
 in_pin:none
