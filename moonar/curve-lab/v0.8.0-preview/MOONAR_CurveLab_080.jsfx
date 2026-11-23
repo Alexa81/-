@@ -52,6 +52,12 @@ slider38:0<-1,1,0.01>Filter Release Curve
 slider39:0<-24,24,1>Transpose (semitones)
 
 @init
+// Local bounded saturation: do not rely on nonstandard tanh() builtins.
+function lab_tanh(input) (
+  input=max(-12,min(12,input));
+  exponent=exp(2*input);
+  (exponent-1)/(exponent+1);
+);
 ext_noinit = 1;
 initialized != 293201 ? (
   initialized=293201;
@@ -596,8 +602,8 @@ has_sample ? (
         fc=max(20,min(srate*0.45,slider28*2^(slider31*vo[24])));
         fg=1-exp(-2*$pi*fc/srate);
         fb=slider29*3.8;
-        inl=tanh((mix_l-fb*vo[31])*filter_drive);
-        inr=tanh((mix_r-fb*vo[35])*filter_drive);
+        inl=lab_tanh((mix_l-fb*vo[31])*filter_drive);
+        inr=lab_tanh((mix_r-fb*vo[35])*filter_drive);
         vo[28]+=fg*(inl-vo[28]);
         vo[29]+=fg*(vo[28]-vo[29]);
         vo[30]+=fg*(vo[29]-vo[30]);
