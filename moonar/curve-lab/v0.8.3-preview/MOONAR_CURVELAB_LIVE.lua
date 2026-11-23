@@ -1822,7 +1822,10 @@ persist_loaded_sample=function(audio)
   local _,previous=reaper.GetSetMediaTrackInfo_String(track,
     'P_EXT:MOONAR_CURVELAB_SAMPLE_PATH','',false)
   reaper.GetSetMediaTrackInfo_String(track,'P_EXT:MOONAR_CURVELAB_SAMPLE_PATH',target,true)
-  reaper.GetSetMediaTrackInfo_String(track,'P_EXT:MOONAR_CURVELAB_SAMPLE_LABEL',file_label,true)
+  -- When restoring an existing cache, retain the user's original source name.
+  if previous~=target or audio.path~=target then
+    reaper.GetSetMediaTrackInfo_String(track,'P_EXT:MOONAR_CURVELAB_SAMPLE_LABEL',file_label,true)
+  end
   if previous~=target and type(reaper.MarkProjectDirty)=='function' then
     reaper.MarkProjectDirty(0)
   end
