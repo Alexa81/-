@@ -648,19 +648,15 @@ newclick=mb && !last_mb;
 // Mouse wheel on footer parameters; edits actual FX sliders.
 mouse_wheel!=0 ? (
   mouse_step=sign(mouse_wheel);
-  (mx-295)^2+(my-869)^2<625 ? (
-    slider5=max(-36,min(12,slider5+mouse_step*0.5));
-    sliderchange(16);slider_automate(16);mouse_wheel=0;
-  );
-  (mx-416)^2+(my-869)^2<625 ? (
+  (mx-335)^2+(my-869)^2<625 ? (
     slider15=max(0,min(100,slider15+mouse_step));
     sliderchange(16384);slider_automate(16384);mouse_wheel=0;
   );
-  (mx-537)^2+(my-869)^2<625 ? (
+  (mx-471)^2+(my-869)^2<625 ? (
     slider14=max(0,min(100,slider14+mouse_step));
     sliderchange(8192);slider_automate(8192);mouse_wheel=0;
   );
-  (mx-658)^2+(my-869)^2<625 ? (
+  (mx-610)^2+(my-869)^2<625 ? (
     slider9=max(0,min(1000,slider9+mouse_step*10));
     slider9>0 && slider6>1 ? (slider6=1;sliderchange(32);slider_automate(32););
     sliderchange(256);slider_automate(256);mouse_wheel=0;
@@ -699,13 +695,13 @@ newclick ? (
     abs(mx-trimx1)<15 ? drag_id=21 : 0;
   );
   drag_id==0 && my>=440 && my<630 ? (
-    // Serum AHDSR: Attack, Hold (only when nonzero), Decay and Release.
-    // Decay moves the release endpoint with it; no extra guide markers.
+    // Small cyan handles are curve controls, NOT new time/level stages.
+    plot_attack_x-plotx>=44 && abs(mx-bend_ax)<13 && abs(my-bend_ay)<15 ? drag_id=35 :
+    plot_decay_x-plot_attack_x>=44 && 1-sv>0.015 && abs(mx-bend_dx)<13 && abs(my-bend_dy)<15 ? drag_id=36 :
+    plot_rel_x-plot_decay_x>=44 && sv>0.015 && abs(mx-bend_rx)<13 && abs(my-bend_ry)<15 ? drag_id=37 :
     abs(mx-plot_rel_x)<19 && abs(my-plotbottom)<23 ? drag_id=32 :
-    abs(mx-plot_decay_x)<19 && abs(my-(plotbottom-sv*plotheight))<25 ? (
-      drag_id=(mouse_cap&8) ? 33 : 31;
-    ) :
-    slider24>0 && abs(mx-plot_hold_x)<18 && abs(my-(plotbottom-plotheight))<23 ? drag_id=34 :
+    abs(mx-plot_decay_x)<19 && abs(my-(plotbottom-sv*plotheight))<25 ?
+      (drag_id=(mouse_cap&8) ? 33 : 31;) :
     abs(mx-plot_attack_x)<19 ? drag_id=30 : 0;
   );
   drag_id==0 ? (
@@ -715,23 +711,24 @@ newclick ? (
     dx=mx-736;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=4;
     dx=mx-920;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=5;
     dx=mx-326;dy=my-375; dx*dx+dy*dy<700 ? drag_id=6;
-    dx=mx-658;dy=my-869; dx*dx+dy*dy<700 ? drag_id=7;
-    dx=mx-295;dy=my-869; dx*dx+dy*dy<700 ? drag_id=8;
-    dx=mx-416;dy=my-869; dx*dx+dy*dy<700 ? drag_id=9;
-    dx=mx-537;dy=my-869; dx*dx+dy*dy<700 ? drag_id=10;
+    dx=mx-610;dy=my-869; dx*dx+dy*dy<700 ? drag_id=7;
+    dx=mx-335;dy=my-869; dx*dx+dy*dy<700 ? drag_id=8;
+    dx=mx-471;dy=my-869; dx*dx+dy*dy<700 ? drag_id=9;
   );
   drag_start_y=my;
   drag_initial=0;
   drag_id==1 ? drag_initial=log(1+slider1/100)/log(321);
-  drag_id==2 ? drag_initial=log(1+slider24/100)/log(321);
-  drag_id==3 ? drag_initial=log(1+slider2/100)/log(321);
-  drag_id==4 ? drag_initial=(slider3+48)/48;
-  drag_id==5 ? drag_initial=log(1+slider4/100)/log(321);
+  drag_id==2 ? drag_initial=log(1+slider2/100)/log(321);
+  drag_id==3 ? drag_initial=(slider3+48)/48;
+  drag_id==4 ? drag_initial=log(1+slider4/100)/log(321);
+  drag_id==5 ? drag_initial=(slider5+36)/48;
   drag_id==6 ? drag_initial=(slider8+12)/24;
   drag_id==7 ? drag_initial=slider9/1000;
-  drag_id==8 ? drag_initial=(slider5+36)/48;
-  drag_id==9 ? drag_initial=slider15/100;
-  drag_id==10 ? drag_initial=slider14/100;
+  drag_id==8 ? drag_initial=slider15/100;
+  drag_id==9 ? drag_initial=slider14/100;
+  drag_id==35 ? drag_initial=slider24;
+  drag_id==36 ? drag_initial=slider25;
+  drag_id==37 ? drag_initial=slider26;
   drag_id==0 ? (
     mx>569 && mx<608 && my>52 && my<91 ? preset_index=max(0,preset_index-1);
     mx>842 && mx<884 && my>52 && my<91 ? preset_index=min(3,preset_index+1);
@@ -753,18 +750,17 @@ newclick ? (
 mb && drag_id>0 ? (
   norm=max(0,min(1,drag_initial+(drag_start_y-my)/180));
   drag_id==1 ? (slider1=100*(321^norm-1);sliderchange(1);slider_automate(1););
-  drag_id==2 ? (slider24=100*(321^norm-1);sliderchange(8388608);slider_automate(8388608););
-  drag_id==3 ? (slider2=100*(321^norm-1);sliderchange(2);slider_automate(2););
-  drag_id==4 ? (slider3=-48+norm*48;sliderchange(4);slider_automate(4););
-  drag_id==5 ? (slider4=100*(321^norm-1);sliderchange(8);slider_automate(8););
+  drag_id==2 ? (slider2=100*(321^norm-1);sliderchange(2);slider_automate(2););
+  drag_id==3 ? (slider3=-48+norm*48;sliderchange(4);slider_automate(4););
+  drag_id==4 ? (slider4=100*(321^norm-1);sliderchange(8);slider_automate(8););
+  drag_id==5 ? (slider5=-36+norm*48;sliderchange(16);slider_automate(16););
   drag_id==6 ? (slider8=-12+norm*24;sliderchange(128);slider_automate(128););
   drag_id==7 ? (
     slider9=norm*1000;sliderchange(256);slider_automate(256);
     slider9>0 && slider6>1 ? (slider6=1;sliderchange(32);slider_automate(32););
   );
-  drag_id==8 ? (slider5=-36+norm*48;sliderchange(16);slider_automate(16););
-  drag_id==9 ? (slider15=norm*100;sliderchange(16384);slider_automate(16384););
-  drag_id==10 ? (slider14=norm*100;sliderchange(8192);slider_automate(8192););
+  drag_id==8 ? (slider15=norm*100;sliderchange(16384);slider_automate(16384););
+  drag_id==9 ? (slider14=norm*100;sliderchange(8192);slider_automate(8192););
   (drag_id==20 || drag_id==21) && has_sample ? (
     targetpct=max(0,min(10000,(mx-301)/716*10000));
     drag_id==20 ? (slider17=min(slider18-20,targetpct);sliderchange(65536);slider_automate(65536);) :
@@ -776,18 +772,24 @@ mb && drag_id>0 ? (
     (slider20=max(0,min(300,(nframes*slider18/10000-targetframes)/source_sr*1000));sliderchange(524288);slider_automate(524288););
   );
   drag_id==30 ? (slider1=max(0,min(32000,(mx-plotx)/max(0.01,plot_pps)*1000));sliderchange(1);slider_automate(1););
-  drag_id==34 ? (slider24=max(0,min(32000,(mx-plot_attack_x)/max(0.01,plot_pps)*1000));sliderchange(8388608);slider_automate(8388608););
-  drag_id==31 ? (slider2=max(0,min(32000,(mx-plot_hold_x)/max(0.01,plot_pps)*1000));sliderchange(2);slider_automate(2););
+  drag_id==31 ? (slider2=max(0,min(32000,(mx-plot_attack_x)/max(0.01,plot_pps)*1000));sliderchange(2);slider_automate(2););
   drag_id==32 ? (slider4=max(0,min(32000,(mx-plot_decay_x)/max(0.01,plot_pps)*1000));sliderchange(8);slider_automate(8););
   drag_id==33 ? (slider3=max(-48,min(0,20*log(max(0.00398107,(plotbottom-my)/plotheight))/log(10)));sliderchange(4);slider_automate(4););
+  // Attack bend: drag up = steeper initial attack.
+  drag_id==35 ? (slider24=max(-1,min(1,drag_initial+(drag_start_y-my)/110));sliderchange(8388608);slider_automate(8388608););
+  // Decay/Release bends: drag down = steeper early fall.
+  drag_id==36 ? (slider25=max(-1,min(1,drag_initial+(my-drag_start_y)/110));sliderchange(16777216);slider_automate(16777216););
+  drag_id==37 ? (slider26=max(-1,min(1,drag_initial+(my-drag_start_y)/110));sliderchange(33554432);slider_automate(33554432););
 );
 !mb && drag_id>0 ? (
   drag_id==1 || drag_id==30 ? slider_automate(1,1);
-  drag_id==2 || drag_id==34 ? slider_automate(8388608,1);
-  drag_id==3 || drag_id==31 ? slider_automate(2,1);
-  drag_id==4 || drag_id==33 ? slider_automate(4,1);
-  drag_id==5 || drag_id==32 ? slider_automate(8,1);
-  drag_id==8 ? slider_automate(16,1);
+  drag_id==2 || drag_id==31 ? slider_automate(2,1);
+  drag_id==3 || drag_id==33 ? slider_automate(4,1);
+  drag_id==4 || drag_id==32 ? slider_automate(8,1);
+  drag_id==5 ? slider_automate(16,1);
+  drag_id==35 ? slider_automate(8388608,1);
+  drag_id==36 ? slider_automate(16777216,1);
+  drag_id==37 ? slider_automate(33554432,1);
 );
 !mb ? drag_id=0;
 last_mb=mb;
