@@ -2686,14 +2686,19 @@ local function handle_mouse()
     end
     if drag==0 and _G.env_points and my>=449 and my<=627 then
       local p=_G.env_points
-      local peak_y=p[5]-p[6]
-      local decay_y=p[5]-(10^(val(3)/20))*p[6]
-      -- No invented paired marker handles: a Serum AHDSR graph has an
-      -- Attack peak, optional Hold peak, Decay/Sustain node and Release end.
-      if math.abs(mx-p[4])<15 and math.abs(my-p[5])<22 then drag=43
-      elseif math.abs(mx-p[3])<16 and math.abs(my-decay_y)<23 then drag=42
-      elseif val(24)>0 and math.abs(mx-p[2])<15 and math.abs(my-peak_y)<22 then drag=41
-      elseif math.abs(mx-p[1])<15 and math.abs(my-peak_y)<22 then drag=40 end
+      -- Bend dots take priority over nearby stage points.
+      for _,node in ipairs(_G.env_bend_points or {}) do
+        if math.abs(mx-node.x)<13 and math.abs(my-node.y)<15 then
+          drag=node.id;break
+        end
+      end
+      local peak_y=p[4]-p[5]
+      local decay_y=p[4]-(10^(val(3)/20))*p[5]
+      if drag==0 then
+        if math.abs(mx-p[3])<15 and math.abs(my-p[4])<22 then drag=43
+        elseif math.abs(mx-p[2])<16 and math.abs(my-decay_y)<23 then drag=42
+        elseif math.abs(mx-p[1])<15 and math.abs(my-peak_y)<22 then drag=40 end
+      end
     end
     if drag==0 then
       local k=hit_knob(mx,my)
@@ -2771,15 +2776,11 @@ local function handle_mouse()
       end
     elseif _G.env_points then
       local p=_G.env_points
-      local raw_time=(mx-p[7])/math.max(1,p[8])*p[9]*1000
+      local raw_time=(mx-p[6])/math.max(1,p[7])*p[8]*1000
       local t=math.max(0,raw_time)
       if drag==40 then
         pset(1,math.max(0,math.min(32000,t)))
-      elseif drag==41 then
-        pset(24,math.max(0,math.min(32000,t-val(1))))
       elseif drag==42 then
-        -- DECAY horizontal = time. Vertical drag on the SAME genuine node
-        -- edits Sustain (Serum-style), without adding any extra dot.
         if not env_drag_axis then
           local dx,dy=mx-drag_initial_x,my-drag_initial_y
           if math.max(math.abs(dx),math.abs(dy))>5 then
@@ -2787,13 +2788,31 @@ local function handle_mouse()
           end
         end
         if env_drag_axis=='level' then
-          local gain=math.max(10^(-48/20),math.min(1,(p[5]-my)/p[6]))
+          local gain=math.max(10^(-48/20),math.min(1,(p[4]-my)/p[5]))
           pset(3,math.max(-48,math.min(0,20*math.log(gain,10))))
         else
-          pset(2,math.max(0,math.min(32000,t-val(1)-val(24))))
+          pset(2,math.max(0,math.min(32000,t-val(1))))
         end
       elseif drag==43 then
-        pset(4,math.max(0,math.min(32000,t-val(1)-val(24)-val(2))))
+        pset(4,math.max(0,math.min(32000,t-val(1)-val(2))))
+      elseif drag==44 or drag==45 or drag==46 then
+        -- Inverse of midpoint gain = .5 ^ exp(-3*bend).
+        -- Hence the dragged point matches the ACTUAL JSFX curve exactly.
+        local level=math.max(0.000001,math.min(.999999,(p[4]-my)/p[5]))
+        local target
+        if drag==44 then
+          target=level
+        elseif drag==45 then
+          local sus=10^(val(3)/20)
+          target=(1-level)/math.max(.000001,1-sus)
+        else
+          local sus=10^(val(3)/20)
+          target=1-level/math.max(.000001,sus)
+        end
+        target=math.max(.000001,math.min(.999999,target))
+        local shape=math.log(target)/math.log(.5)
+        local bend=math.max(-1,math.min(1,-math.log(shape)/3))
+        pset(drag==44 and 24 or (drag==45 and 25 or 26),bend)
       end
     end
   end
