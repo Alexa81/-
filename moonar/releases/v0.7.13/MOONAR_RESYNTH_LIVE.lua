@@ -2444,54 +2444,57 @@ local function draw()
   rect(61,443,954,189,.019,.026,.031,1)
   -- AHDSR tick marks are drawn from a single real time axis below.
   local x0,ybot,h,pw=85,621,154,890
-  local attack_ms,hold_ms,decay_ms,release_ms=val(1),val(24),val(2),val(4)
+  local attack_ms,decay_ms,release_ms=val(1),val(2),val(4)
   local sustain=10^(math.max(-48,math.min(0,val(3)))/20)
-  -- SERUM AHDSR: a SINGLE timeline in seconds, not 4 artificial stage slots.
-  -- For a held note Sustain lasts indefinitely. The editor illustrates Note
-  -- Off at the Decay/Sustain boundary, as in the supplied Serum screenshot.
-  -- Therefore increasing DEC moves the decay/end point AND the bottom Release
-  -- end point together, without inventing any guide lines or fake points.
-  local time_sec=math.max(3.7,(attack_ms+hold_ms+decay_ms+release_ms)/1000+0.30)
+  local a_shape=math.exp(-3*val(24))
+  local d_shape=math.exp(-3*val(25))
+  local r_shape=math.exp(-3*val(26))
+  -- TRUE ADSR ONLY. One Serum-style common axis; no HOLD and no fake guide nodes.
+  -- DEC moves its own end and the Release endpoint by the same amount.
+  local time_sec=math.max(3.7,(attack_ms+decay_ms+release_ms)/1000+0.30)
   local px_per_ms=pw/(time_sec*1000)
   local xx_at=x0+attack_ms*px_per_ms
-  local xx_hold=xx_at+hold_ms*px_per_ms
-  local xx_dc=xx_hold+decay_ms*px_per_ms
+  local xx_dc=xx_at+decay_ms*px_per_ms
   local xx_ed=xx_dc+release_ms*px_per_ms
-  _G.env_points={xx_at,xx_hold,xx_dc,xx_ed,ybot,h,x0,pw,time_sec}
+  -- index 1 = attack, 2 = decay, 3 = release, 4 = baseline Y,
+  -- 5 = height, 6 = start X, 7 = width, 8 = time span in seconds.
+  _G.env_points={xx_at,xx_dc,xx_ed,ybot,h,x0,pw,time_sec}
   local function env_gain_at(x)
     if x<xx_at then
-      return math.max(0,(x-x0)/math.max(0.00001,xx_at-x0))
-    elseif x<xx_hold then return 1
+      local t=math.max(0,math.min(1,(x-x0)/math.max(0.00001,xx_at-x0)))
+      return t^a_shape
     elseif x<xx_dc then
-      return 1-(1-sustain)*((x-xx_hold)/math.max(0.00001,xx_dc-xx_hold))
+      local t=math.max(0,math.min(1,(x-xx_at)/math.max(0.00001,xx_dc-xx_at)))
+      return 1-(1-sustain)*t^d_shape
     elseif x<xx_ed then
-      return sustain*math.exp(-6.907755*(x-xx_dc)/math.max(0.00001,xx_ed-xx_dc))
+      local t=math.max(0,math.min(1,(x-xx_dc)/math.max(0.00001,xx_ed-xx_dc)))
+      return sustain*(1-t^r_shape)
     end
     return 0
   end
-  -- Real time ticks, automatically fitted if any stage exceeds the window.
   for tick=1,4 do
     local x=x0+pw*tick/4
     line(x,447,x,627,.21,.26,.28,.38)
     txt(x-14,636,string.format('%.1fs',time_sec*tick/4),10,.55,.61,.62)
   end
-  -- Faint source preview (not a rendered held note), modulated by AHDSR.
+  -- Audio sample preview is illustrative. The curve itself is identical
+  -- to the three power-law DSP curves in MOONAR JSFX 0.6.6.
   if source and source.frames>0 then
     local first=math.max(1,math.floor(source.frames*val(17)/10000)+1)
     local last=math.min(source.frames,math.floor(source.frames*val(18)/10000))
     if last>first then
       local bins=440
       local peakbins={}
-      local top=0.0001
-      for sample_bin=1,bins do
-        local i0=first+math.floor((sample_bin-1)*(last-first)/bins)
-        local i1=math.max(i0,math.min(last,first+math.floor(sample_bin*(last-first)/bins)))
+      local top=.0001
+      for b=1,bins do
+        local i0=first+math.floor((b-1)*(last-first)/bins)
+        local i1=math.max(i0,math.min(last,first+math.floor(b*(last-first)/bins)))
         local step=math.max(1,math.floor((i1-i0+1)/12))
         local amp=0
         for i=i0,i1,step do
           amp=math.max(amp,math.abs(source.left[i] or 0),math.abs(source.right[i] or 0))
         end
-        peakbins[sample_bin]=amp
+        peakbins[b]=amp
         top=math.max(top,amp)
       end
       local normalization=math.min(12,.94/top)
@@ -2500,48 +2503,59 @@ local function draw()
         local x=x0+(b-1)*pw/bins
         local gain=math.max(0,math.min(1,env_gain_at(x)))
         local amp=math.min(35,(peakbins[b] or 0)*normalization*35)*gain
-        if amp>0.13 then line(x,middle-amp,x,middle+amp,.29,.87,.79,.78) end
+        if amp>.13 then line(x,middle-amp,x,middle+amp,.29,.87,.79,.78) end
       end
     end
   end
-  -- Smooth curve; exact zero-length stage boundaries remain explicit.
   local oldx,oldy=nil,nil
   for segment=0,890 do
     local x=x0+pw*segment/890
     local y=ybot-h*math.max(0,math.min(1,env_gain_at(x)))
-    -- Serum-style filled envelope, separate from the source waveform.
     line(x,y,x,ybot,.10,.55,.67,.13)
     if oldx then line(oldx,oldy,x,y,.99,.69,.25,1) end
     oldx,oldy=x,y
   end
   if attack_ms<=0 then line(x0,ybot,x0,ybot-h,.99,.69,.25,1) end
-  if decay_ms<=0 then line(xx_hold,ybot-h,xx_dc,ybot-sustain*h,.99,.69,.25,1) end
+  if decay_ms<=0 then line(xx_at,ybot-h,xx_dc,ybot-sustain*h,.99,.69,.25,1) end
   if release_ms<=0 then line(xx_dc,ybot-sustain*h,xx_dc,ybot,.99,.69,.25,1) end
-  -- ONLY genuine Serum control nodes: Attack peak, optional Hold peak,
-  -- Decay/Sustain endpoint, and Release endpoint. No additional paired markers.
+  -- Large amber points = real ADSR stage ends only.
   circ(xx_at,ybot-h,9,.98,.73,.27,1)
-  if hold_ms>0 and xx_hold-xx_at>4 then circ(xx_hold,ybot-h,8,.98,.73,.27,1) end
   circ(xx_dc,ybot-sustain*h,9,.98,.73,.27,1)
   circ(xx_ed,ybot,9,.98,.73,.27,1)
-  txt(78,453,'AHDSR  /  SERUM-STYLE ENVELOPE  /  COMMON TIME AXIS',11,.54,.80,.75)
-  txt(78,472,'DEC MOVES BOTH ENDPOINTS  |  HOLD IS SEPARATE  |  NOTE OFF IS ILLUSTRATIVE',10,.92,.75,.44)
+  -- Small cyan points = BEND controls inside existing segments.
+  -- They appear only when a stage is stretched enough to edit its curve.
+  local bends={
+    {44,(x0+xx_at)/2,env_gain_at((x0+xx_at)/2),xx_at-x0>=44,24},
+    {45,(xx_at+xx_dc)/2,env_gain_at((xx_at+xx_dc)/2),xx_dc-xx_at>=44 and 1-sustain>.015,25},
+    {46,(xx_dc+xx_ed)/2,env_gain_at((xx_dc+xx_ed)/2),xx_ed-xx_dc>=44 and sustain>.015,26}
+  }
+  _G.env_bend_points={}
+  for _,p in ipairs(bends) do
+    if p[4] then
+      local y=ybot-p[3]*h
+      circ(p[2],y,6,.36,.85,.95,1)
+      _G.env_bend_points[#_G.env_bend_points+1]={id=p[1],x=p[2],y=y,param=p[5]}
+    end
+  end
+  txt(78,453,'ADSR / SERUM CURVE HANDLES',11,.54,.80,.75)
+  txt(78,472,'CYAN DOTS: BEND ATTACK, DECAY, RELEASE   |   NO HOLD',11,.92,.75,.44)
   txt(84,636,'0',11,.55,.6,.6)
   local xs={190,372,554,736,920}
-  local labels={'ATTACK','HOLD','DECAY','SUSTAIN','RELEASE'}
-  local par={1,24,2,3,4}
-  local texts={fmt_adsr(val(1)),fmt_adsr(val(24)),fmt_adsr(val(2)),fmt(val(3),'%.1f dB'),fmt_adsr(val(4))}
+  local labels={'ATTACK','DECAY','SUSTAIN','RELEASE','VOLUME'}
+  local par={1,2,3,4,5}
+  local texts={fmt_adsr(val(1)),fmt_adsr(val(2)),fmt(val(3),'%.1f dB'),fmt_adsr(val(4)),fmt(val(5),'%+.1f dB')}
   for i=1,5 do
     local v=val(par[i]);local mn,mxv=knobrange[i][1],knobrange[i][2]
-    local norm=(par[i]==3) and math.max(0,math.min(1,(v-mn)/(mxv-mn))) or ms_to_norm(v)
-    knob(xs[i],735,35,labels[i],texts[i],norm,false)
+    local norm=(par[i]==3 or par[i]==5)
+      and math.max(0,math.min(1,(v-mn)/(mxv-mn))) or ms_to_norm(v)
+    knob(xs[i],735,35,labels[i],texts[i],norm,par[i]==5)
   end
   panel(44,837,990,65)
   txt(65,856,'MOONAR / DSP',14,.89,.90,.90)
   txt(65,879,(status or ''):sub(1,29),10,.58,.76,.73)
-  miniknob(295,869,(val(5)+36)/48,'LEVEL',fmt(val(5),'%+.1f dB'))
-  miniknob(416,869,val(15)/100,'NOISE',fmt(val(15),'%.0f%%'))
-  miniknob(537,869,val(14)/100,'MOTION',fmt(val(14),'%.0f%%'))
-  miniknob(658,869,val(9)/1000,'GLIDE',fmt(val(9),'%.0f ms'))
+  miniknob(335,869,val(15)/100,'NOISE',fmt(val(15),'%.0f%%'))
+  miniknob(471,869,val(14)/100,'MOTION',fmt(val(14),'%.0f%%'))
+  miniknob(610,869,val(9)/1000,'GLIDE',fmt(val(9),'%.0f ms'))
   button(755,854,112,34,'LEGATO',val(13)>0)
   button(886,854,74,34,'MONO',val(6)<=1)
   button(960,854,72,34,'POLY',val(6)>1)
