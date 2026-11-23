@@ -2,7 +2,7 @@
 
 MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
 
-**Latest release: MOONAR 0.7.9** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine unchanged).
+**Latest release: MOONAR 0.7.10** (interface) + **JSFX 0.6.4 Natural Sustain** (audio engine unchanged).
 
 ## UPDATE button
 
@@ -21,8 +21,8 @@ The separate JSFX instrument needs sample audio plus MIDI notes to make sound. U
 
 - [Current manifest](moonar/latest.txt)
 - [Whole-plugin UPDATE 1.4](moonar/MOONAR_UPDATE.lua)
-- [MOONAR LIVE 0.7.9](moonar/releases/v0.7.9/MOONAR_RESYNTH_LIVE.lua)
-- [JSFX 0.6.4](moonar/releases/v0.7.9/MOONAR_Resynth_064.jsfx)
+- [MOONAR LIVE 0.7.10](moonar/releases/v0.7.10/MOONAR_RESYNTH_LIVE.lua)
+- [JSFX 0.6.4](moonar/releases/v0.7.10/MOONAR_Resynth_064.jsfx)
 - [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
 - [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
 
@@ -55,11 +55,19 @@ The lower preview's vertical level is the **actual linear-amplitude gain** compu
 
 The UI now uses the inverse of the same nonlinear stage-time mapping for dragging Attack, Decay and Release handles. **This release does not change the 0.6.4 audio DSP**, preserving the recorded Natural Sustain sound and existing presets.
 
+## Paired DECAY control nodes (0.7.10)
+
+In the custom MOONAR LIVE ADSR panel, the DECAY position now has **two linked amber control points**, one at the top of a vertical guide and one at the bottom. Turning DECAY moves **both points left or right together**. Dragging either point or the guide horizontally adjusts only the DECAY time (0–32 seconds).
+
+SUSTAIN is a separate gain-level control. Dragging the DECAY guides does not adjust SUSTAIN. Dragging the Sustain/Note Off node still controls its vertical level, while the Release endpoint separately controls release time.
+
+The two DECAY dots are **time-position guides**, not two separate ADSR stages. The gain curve remains the actual ADSR attack-decay-sustain-release envelope. This version changes the custom Lua GUI only; the JSFX 0.6.4 audio engine and user presets are unchanged.
+
 ## Troubleshooting
 
-If UPDATE reports **Already current, 0.7.8**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
+If UPDATE reports **Already current, 0.7.9**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
 
-If UPDATE reports **MOONAR 0.7.9 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
+If UPDATE reports **MOONAR 0.7.10 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
 
 Do not delete older JSFX instances or user presets during troubleshooting.
 
