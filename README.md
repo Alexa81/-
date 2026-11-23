@@ -1,100 +1,79 @@
-# MOONAR RESYNTH — GitHub updates and whole-plugin repair
+# MOONAR RESYNTH for REAPER / macOS
 
-MOONAR RESYNTH is a REAPER/macOS Lua UI plus a separate JSFX instrument engine.
+**Current published version: MOONAR RESYNTH 0.7.14** (Lua controller) with
+**JSFX 0.6.6 Curved ADSR** (unchanged since 0.7.13).
 
-**Latest release: MOONAR 0.7.12** (interface) + **JSFX 0.6.5 Serum AHDSR** (audio engine adds genuine HOLD stage).
+This is an original, experimental REAPER Lua + JSFX sampler/resynth instrument.
 
-## UPDATE button
+## Install / UPDATE
 
-Select the target track in REAPER, open the MOONAR LIVE interface, and click **UPDATE**.
+Select the REAPER track on which you want MOONAR to run, open the MOONAR LIVE
+window, and click **UPDATE**. The updater checks the SHA-256 integrity of the
+Lua controller and JSFX and restores missing or damaged components. It may
+reopen the controller window on the selected track.
 
-- Existing 0.7.7 updater sees 0.7.8 and installs the new controller and JSFX engine, without closing REAPER.
-- The 0.7.8 controller automatically installs its bundled **MOONAR UPDATE 1.4** script locally on startup, making future updates and repairs one-click.
-- Starting with updater 1.4, pressing UPDATE verifies **both** the Lua UI and the JSFX engine against `latest.txt` SHA-256 checksums, including when the UI is already the latest version.
-- Missing or corrupted components are downloaded and repaired, each with a backup of the previous file.
-- On the selected track, the updater looks for the latest compatible JSFX. If only a legacy MOONAR is attached, it attempts to add the new engine. It preserves the previous FX and does not delete presets.
-- After a repair, the updater reopens MOONAR LIVE on the selected track; REAPER itself stays open.
+- [Current GitHub release manifest](moonar/latest.txt)
+- [MOONAR RESYNTH 0.7.14 controller](moonar/releases/v0.7.14/MOONAR_RESYNTH_LIVE.lua)
+- [MOONAR Resynth 0.6.6 JSFX engine](moonar/releases/v0.7.14/MOONAR_Resynth_066.jsfx)
+- [Whole-plugin repair updater](moonar/MOONAR_UPDATE.lua)
+- [One-time macOS updater recovery script](moonar/MOONAR_REPAIR_ONCE.sh)
 
-The separate JSFX instrument needs sample audio plus MIDI notes to make sound. Updating the files alone does **not** prove audio output is functioning.
-
-## Source links
-
-- [Current manifest](moonar/latest.txt)
-- [Whole-plugin UPDATE 1.4](moonar/MOONAR_UPDATE.lua)
-- [MOONAR LIVE 0.7.12](moonar/releases/v0.7.12/MOONAR_RESYNTH_LIVE.lua)
-- [JSFX 0.6.5](moonar/releases/v0.7.12/MOONAR_Resynth_065.jsfx)
-- [macOS auto-check setup](moonar/MOONAR_GITHUB_SETUP.sh)
-- [Background checker](moonar/MOONAR_AUTOUPDATE.sh)
-
-## Infinite Sustain / holding a note
-
-Starting in 0.7.7, **HOLD NOTE / C5** in the Lua window sends a MIDI note-on that remains active indefinitely. The button switches to **RELEASE NOTE / C5**; pressing it sends MIDI note-off and begins the configured ADSR Release (up to 32 seconds). Closing MOONAR LIVE releases the test note for safety. Notes played from REAPER MIDI items or MIDI keyboards follow the same held-note ADSR semantics.
-
-The recorded PCM plays first for natural attack; the JSFX 0.6.3 spectral engine overlaps into a sustained tone earlier, over a longer crossfade window, and keeps oscillators running after the source sample ends. The quality of an individual sample transition depends on that sample's body and spectrum; end-to-end real-time audio on the user's Mac is not yet validated.
-
-
-## Natural Sustain and working fades (0.7.8)
-
-The **NATURAL** mode (default) keeps the imported PCM attack and continues the recorded sample by looping a selected body segment with an adjustable crossfade. This avoids the metallic partial-tone character of static spectral synthesis, but a short or highly changing sound can still exhibit audible loop repetition. The **SPECTRAL** mode remains accessible for comparison.
-
-**Fade In** (top amber handle) ramps the recorded PCM in at the start of a MIDI note. **LOOP FADE** (bottom amber handle or the named button) controls the crossfade between the loop end and start while a note remains held. This is not a fade to silence during sustain; a note ends only after MIDI Note Off and the ADSR **Release**.
-
-The ADSR drawing shows a dedicated Sustain handle where the horizontal segment meets Release. Drag it vertically to change Sustain independently of Decay and Release time. Sustain height and the Sustain knob use a dB-scaled display; the audio engine still converts that dB value to linear gain. Legacy 22-parameter presets remain loadable and new presets can save 23 parameters, including the Natural/Spectral choice.
-
-When switching sound engines on the selected REAPER track, previous MOONAR FX instances are preserved but bypassed after the imported sample has been passed to the newest engine. This avoids accidentally layering an older metallic-sounding engine with the new natural loop.
-
-**Audio quality caveat:** source compatibility and hashes have been checked. Sample-specific looping and end-to-end audio playback must still be validated within REAPER on macOS. The presence of the 0.7.8 version number alone does not verify sound quality.
-
-## ADSR plot and gain preview (0.7.9)
-
-The upper panel is the original source waveform. The lower ADSR panel now renders an **ADSR-gain-modulated illustrative waveform preview**, rather than showing a full-strength raw sample behind an envelope indicating silence.
-
-The GUI uses a **nonlinear per-stage horizontal scale**, so short attacks remain visible and a full 32-second Decay does not look like an arbitrarily short slice of the original 0.5-second WAV. The lower panel is a control/shape preview, **not a literal 32-second audio render or sample-length timeline**. For real measured audio, use REAPER rendering/meters.
-
-The lower preview's vertical level is the **actual linear-amplitude gain** computed from the Sustain parameter in decibels: 0 dB corresponds to a gain of 1, -48 dB to roughly 0.004. The preview shows a linear-amplitude attack and decay plus an exponential Release, following the JSFX envelope law. The Sustain/Note Off handle is separate; Release begins at the Sustain level. A zero-millisecond Release is a vertical drop; a longer Release moves its end to the right.
-
-The UI now uses the inverse of the same nonlinear stage-time mapping for dragging Attack, Decay and Release handles. **This release does not change the 0.6.4 audio DSP**, preserving the recorded Natural Sustain sound and existing presets.
-
-## Paired DECAY control nodes (0.7.10)
-
-In the custom MOONAR LIVE ADSR panel, the DECAY position now has **two linked amber control points**, one at the top of a vertical guide and one at the bottom. Turning DECAY moves **both points left or right together**. Dragging either point or the guide horizontally adjusts only the DECAY time (0–32 seconds).
-
-SUSTAIN is a separate gain-level control. Dragging the DECAY guides does not adjust SUSTAIN. Dragging the Sustain/Note Off node still controls its vertical level, while the Release endpoint separately controls release time.
-
-The two DECAY dots are **time-position guides**, not two separate ADSR stages. The gain curve remains the actual ADSR attack-decay-sustain-release envelope. This version changes the custom Lua GUI only; the JSFX 0.6.4 audio engine and user presets are unchanged.
-
-## DECAY: only the original two handles (0.7.11)
-
-The paired **top and bottom** DECAY points remain linked and both move left/right when DECAY changes. The unwanted **third dot at the intersection with the Sustain level** has been removed. The actual envelope still joins the Sustain line at that level; no extra node is displayed or introduced. Decay time adjustment does not change Sustain. Audio JSFX 0.6.4 is unchanged.
-
-## Serum-style AHDSR envelope — v0.7.12
-
-The previous cosmetic top/bottom DECAY guide pair has been removed entirely. The new graphical editor and JSFX now use Serum's **Attack / Hold / Decay / Sustain / Release** stages on **one common time axis**. Its knob row is **ATK, HOLD, DEC, SUS, REL**, with the master output **LEVEL** retained in the footer.
-
-**The key interaction:** the Decay/Sustain endpoint is at `Attack + Hold + Decay`, and the lower Release endpoint is at `Attack + Hold + Decay + Release`. Increasing or decreasing **DEC** moves both endpoints together by the same time; **REL** moves only the lower endpoint relative to the Decay point. With **SUS = 0 dB**, the Decay point is on the top line while Release ends at the bottom, reproducing the reference Serum screenshot behavior without adding artificial handles.
-
-**HOLD** is a real, independent audio stage in JSFX 0.6.5 (slider 24, range 0–32 seconds), not merely a UI control. The NATURAL sample-loop sustain continues indefinitely until MIDI Note Off. Attack, Hold, Decay and Release are time controls and Sustain is a level. The graph presents an illustrative Note Off at the Decay/Sustain boundary; an actual note can remain in Sustain indefinitely while the MIDI key remains held. Moving the Decay node horizontally edits Decay; moving it vertically edits Sustain, without adding a second node.
-
-A single real-time seconds scale is used. It defaults to a roughly 3.7-second view, automatically expanding to accommodate longer envelopes (up to 32 seconds per time control). As with Serum's locked zoom, an auto-expanded ruler may rescale when longer durations are used.
-
-Existing 22- and 23-parameter sound presets still load. New presets save 24 parameters including HOLD. A separately named JSFX engine is installed and previous engine files are preserved. Before trusting it in a production session, back up the REAPER project and confirm audio operation on your own Mac; UI/engine source consistency and release hashes can be checked remotely, but live DSP behavior cannot be verified here.
-
-## Troubleshooting
-
-If UPDATE reports **Already current, 0.7.11**, GitHub still advertises the same version or a cached updater/manifest is in use. Verify the [current manifest](moonar/latest.txt) and rerun UPDATE.
-
-If UPDATE reports **MOONAR 0.7.12 fully up to date**, both installed files passed checksums. This does not automatically prove that the active REAPER FX is audible. Reopen MOONAR LIVE on the selected track, verify `MOONAR Resynth 0.6.4 Natural Sustain` is enabled in its FX chain, import a sample, and send MIDI.
-
-Do not delete older JSFX instances or user presets during troubleshooting.
-
-**Testing:** GitHub file contents and checksums have been verified. End-to-end audio output, local macOS permissions, and REAPER FX refresh behavior have not been tested on the user's computer. The release should be treated as a tested-publication but not a confirmed working audio build.
-
-## If the old UPDATE button does nothing
-
-On macOS, run this one-time verified repair from Terminal:
+If an old or unregistered in-plugin UPDATE button does nothing, run the
+one-time recovery script from a Terminal on the Mac:
 
 ```sh
 curl -fsSL "https://raw.githubusercontent.com/Alexa81/-/main/moonar/MOONAR_REPAIR_ONCE.sh" -o /tmp/MOONAR_REPAIR_ONCE.sh && /bin/bash /tmp/MOONAR_REPAIR_ONCE.sh
 ```
 
-The [repair script](moonar/MOONAR_REPAIR_ONCE.sh) checks for REAPER's standard resource directory, downloads the current Lua UI, JSFX and updater, verifies each SHA-256 digest against [latest.txt](moonar/latest.txt), and installs them with backups. It does not delete presets, FX chains, or older engines. It prints success or a specific error rather than silently quitting. This repair is a one-time escape hatch when the local UPDATE script itself is stale. After it runs, open `MOONAR_RESYNTH_LIVE.lua` from REAPER Actions on the selected track.
+This backs up replaced plugin files and checks downloaded checksums. It does
+not require reinstalling REAPER or deleting sound presets.
+
+## Four-stage ADSR and curve handles
+
+- **Attack, Decay, Sustain, Release:** four main ADSR stages, no HOLD.
+- **Attack, Decay, Release curve handles:** three small cyan mid-segment dots
+  allow bending each curve separately, affecting actual JSFX audio gain rather
+  than merely changing the GUI drawing.
+- **Sustain:** remains a level in dB and is not redefined by the other changes.
+- **Release:** begins on MIDI Note Off and fades out from the note's actual
+  level, including if the note was released during Attack or Decay.
+- **Time ranges:** Attack, Decay, Release each range from 0 ms to 32 s.
+
+The envelope graph uses a shared time axis and illustrates Note Off at
+the Decay/Sustain boundary. In real playback, Sustain can last indefinitely
+while the MIDI note is held.
+
+## Extended waveform preview (0.7.14)
+
+The lower ADSR waveform now shows the sample evolving for the **entire visible
+Decay and Release time**, including when the imported WAV is shorter than
+the programmed envelope. The preview is generated from the actual imported
+PCM samples: first the original attack is played, then the Natural Loop mode's
+stable sample body is replayed with a crossfade, extending the waveform rather
+than horizontally stretching a static image.
+
+The graphics follow the same Natural Loop boundaries (20–65% of the selected
+region) and fade control as the JSFX engine. They are a **visual approximation**
+of the resulting audio at the root pitch, not a rendered audio export.
+The original upper source waveform is preserved.
+
+**Important:** this is natural PCM looping/crossfading, **not a full
+pitch-preserving WSOLA or phase-vocoder time-stretch algorithm**. It preserves
+the original sample material but may reveal repetitions or tonal changes on
+very short or noisy sources; it cannot reconstruct recorded details that do
+not exist in the WAV.
+
+## Natural and spectral modes
+
+The default **NATURAL** mode loops the sample body while a note remains held
+and during its ADSR Release; the **SPECTRAL** mode remains an alternative.
+The audio engine already supported indefinite held-note playback before
+0.7.14, and is not modified in this release. The new release fixes the
+waveform preview's correspondence to the actual audio duration.
+
+## Verification and limitations
+
+Release source and integrity hashes have been checked. Audio playback,
+click-free looping on individual sources, GUI rendering and hardware I/O
+routing are **not yet verified on the user's REAPER/macOS system**. Always
+save a backup of the REAPER project before using an experimental release.
