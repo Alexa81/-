@@ -2,6 +2,6 @@ version=0.8.1-preview
 engine=moonar/curve-lab/v0.8.1-preview/MOONAR_CurveLab_080.jsfx
 engine_sha256=cdc27efe9286e47f3526f1435635452540ba92a96490c0990594fcb389363a14
 controller=moonar/curve-lab/v0.8.1-preview/MOONAR_CURVELAB_LIVE.lua
-controller_sha256=612c6fafa10b2f1a233b17722766fc8cd51ba341951b3d21943db67c774dd209
+controller_sha256=7ef1b4850f270a843f20e4fc08877dfca273d97cbf3a8019d77871090f77318b
 updater=moonar/curve-lab/MOONAR_CURVELAB_UPDATE.lua
 updater_sha256=53b8af3e8a61c273aca43231926f984766d534977cf1c8f088400d5077ef15c0
