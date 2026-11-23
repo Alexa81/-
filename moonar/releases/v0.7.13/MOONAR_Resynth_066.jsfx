@@ -1,0 +1,1042 @@
+
+desc:MOONAR Resynth 0.6.6 Curved ADSR
+tags:instrument sampler resynthesis
+options:gmem=MOONAR_RESYNTH_BRIDGE_04 maxmem=3100000
+in_pin:none
+out_pin:Left
+out_pin:Right
+
+// MOONAR_BUILD=0.6.6
+// Independent educational sampler/resynthesis prototype, NOT Tim Hox's source.
+// Protocol version 2. Natural PCM body-loop sustain (default) or optional spectral synthesis.
+
+slider1:0<0,32000,1>Attack (ms)
+slider2:200<0,32000,1>Decay (ms)
+slider3:0<-48,0,0.1>Sustain (dB)
+slider4:650<0,32000,1>Release (ms)
+slider5:0<-36,12,0.1>Output (dB)
+slider6:4<1,4,1>Polyphony (voices)
+slider7:72<24,96,1>MIDI keyboard root (C5=72)
+slider8:0<-12,12,0.01>Fine tune (semitones)
+slider9:0<0,1000,1>Glide (ms, mono)
+slider10:1<0,1,1{Off,On}>Tune detected root to nearest C
+slider11:1<1,2,1>Internal import slot (1-2)
+slider12:90<10,250,1>Original-to-synthesis fade (ms)
+slider13:0<0,1,1{Off,On}>Legato (mono only)
+slider14:0<0,100,1>Organic harmonic motion (%)
+slider15:0<0,100,1>Residual noise body (%)
+slider16:2<0,12,1>Pitch bend range (semitones)
+slider17:0<0,10000,1>Trim Start (0-100%)
+slider18:10000<1,10000,1>Trim End (0-100%)
+slider19:5<0,300,1>Start Fade (ms)
+slider20:70<0,300,1>End Fade / Synth Crossfade (ms)
+slider21:0<-1.5,1.5,0.05>Fade In Bend
+slider22:0<-1.5,1.5,0.05>Fade Out Bend
+slider23:0<0,1,1{Natural Loop,Spectral}>Sustain Engine
+slider24:0<-1,1,0.01>Attack Curve
+slider25:0<-1,1,0.01>Decay Curve
+slider26:0<-1,1,0.01>Release Curve
+
+@init
+ext_noinit = 1;
+initialized != 293201 ? (
+  initialized=293201;
+  samp_l=0;
+  samp_r=1400000;
+  peak_freq=2800000;
+  peak_amp_l=2800128;
+  peak_phase_l=2800256;
+  peak_amp_r=2800384;
+  peak_phase_r=2800512;
+  // Temporary previous model, used for seamless live model swaps.
+  prev_peak_freq=2800704;
+  prev_amp_l=2800832;
+  prev_phase_l=2800960;
+  prev_amp_r=2801088;
+  prev_phase_r=2801216;
+  prev_npeak=0;
+  prev_gain_l=1;
+  prev_gain_r=1;
+  model_ramp=1;
+  voice_mem=2900000;
+  event_time=2901000;
+  event_status=2901256;
+  event_note=2901512;
+  event_velocity=2901768;
+  stride=24;
+  max_frames=1323000;
+  peak_capacity=64;
+  // Do not erase restored @serialize data when @init runs on project load.
+  has_sample != 1 ? (
+    has_sample=0;
+    nframes=0;
+    source_sr=44100;
+    detected_note=72;
+    npeak=0;
+    handoff_end=0;
+    model_gain_l=1;
+    model_gain_r=1;
+    nLlo=0;nLmid=0;nLhi=0;
+    nRlo=0;nRmid=0;nRhi=0;
+  );
+  last_generation=-1;
+  load_generation=-1;
+  loading=0;
+  load_cursor=0;
+  pedal_down=0;
+  bend_semi=0;
+  bend_ratio=1;
+  i=0;
+  loop(4,
+    off=voice_mem+i*stride;
+    off[0]=0;off[5]=0;off[21]=0;
+    off[15]=0;off[16]=0;off[17]=0;off[18]=1;off[19]=1;off[20]=0;
+    i+=1;
+  );
+);
+
+@slider
+// The SAME normalised power curve is used by audio and both GUIs:
+ // curve = -1 => ease-in, 0 => linear, +1 => ease-out.
+ // These additional mid-segment handles never add new envelope stages.
+attack_samples=max(1,slider1*srate/1000);
+decay_samples=max(1,slider2*srate/1000);
+release_samples=max(1,slider4*srate/1000);
+attack_shape=exp(-3*slider24);
+decay_shape=exp(-3*slider25);
+release_shape=exp(-3*slider26);
+sus_level=10^(slider3/20);
+output_gain = 10^(slider5/20);
+xfade_frames = max(1,slider12*0.001*source_sr);
+// Trim coordinates operate on the *entire* imported source PCM, live.
+clip_start=max(0,min(max(0,nframes-512),floor(nframes*slider17/10000)));
+clip_end=max(clip_start+512,min(nframes,floor(nframes*slider18/10000)));
+fade_in_frames=max(0,slider19*0.001*source_sr);
+fade_out_frames=max(1,slider20*0.001*source_sr);
+// Move the active playhead as the user drags a locator.
+clip_start != old_clip_start ? (
+  vv=0;
+  loop(4, vvo=voice_mem+vv*stride; vvo[0]>0 ? vvo[3]=clip_start; vv+=1;);
+  old_clip_start=clip_start;
+);
+old_clip_end=clip_end;
+slide_coef = slider9 > 0 ? exp(-6.907755*1000/(max(1,slider9)*srate)) : 0;
+noise_mix = slider15*0.01;
+motion_depth = slider14*0.001;
+bend_ratio=2^(bend_semi/12);
+low_a=1-exp(-2*$pi*500/max(8000,srate));
+high_a=1-exp(-2*$pi*3500/max(8000,srate));
+lo_var=low_a/(2-low_a);
+hi_var=high_a/(2-high_a);
+cross_cov=(low_a*high_a)/(low_a+high_a-low_a*high_a);
+// Noise source rand(2)-1 has variance 1/3; these make each generated
+// low/mid/high band unit RMS before multiplying by measured residual RMS.
+lo_norm=sqrt(3/max(0.00001,lo_var));
+mid_norm=sqrt(3/max(0.00001,hi_var+lo_var-2*cross_cov));
+hi_norm=sqrt(3/max(0.00001,1+hi_var-2*high_a));
+
+@serialize
+// Save both PCM source and model in the REAPER project.
+file_var(0,has_sample);
+file_var(0,nframes);
+file_var(0,source_sr);
+file_var(0,detected_note);
+file_var(0,npeak);
+file_var(0,handoff_end);
+file_var(0,model_gain_l);
+file_var(0,model_gain_r);
+file_var(0,nLlo);file_var(0,nLmid);file_var(0,nLhi);
+file_var(0,nRlo);file_var(0,nRmid);file_var(0,nRhi);
+has_sample ? (
+  file_mem(0,samp_l,nframes);
+  file_mem(0,samp_r,nframes);
+  file_mem(0,peak_freq,640);
+);
+
+@block
+// Named gmem bridge. Lua writes audio + model first, commits generation last.
+slot_base=(floor(slider11)-1)*3200000;
+bridge_ready=gmem[slot_base]==1;
+bridge_version=gmem[slot_base+1];
+bridge_ready && bridge_version != last_generation && bridge_version != load_generation ? (
+  load_generation=bridge_version;
+  loading=1;
+  load_cursor=0;
+  incoming_len=min(max_frames,max(0,floor(gmem[slot_base+2])));
+  incoming_model_only=floor(gmem[slot_base+15])==1;
+  incoming_sr=max(8000,gmem[slot_base+3]);
+  incoming_note=gmem[slot_base+4];
+  incoming_peaks=min(peak_capacity,max(0,floor(gmem[slot_base+5])));
+  incoming_handoff=min(incoming_len,max(1,floor(gmem[slot_base+6])));
+  incoming_gain_l=gmem[slot_base+7];
+  incoming_gain_r=gmem[slot_base+8];
+  incoming_nLlo=gmem[slot_base+9];
+  incoming_nLmid=gmem[slot_base+10];
+  incoming_nLhi=gmem[slot_base+11];
+  incoming_nRlo=gmem[slot_base+12];
+  incoming_nRmid=gmem[slot_base+13];
+  incoming_nRhi=gmem[slot_base+14];
+  // Keep the previous spectrum alive during an update. Otherwise replacing
+  // peaks mid-note can make an audible step even though the original PCM is
+  // playing normally.
+  incoming_model_only && has_sample ? (
+    prev_npeak=npeak;
+    prev_gain_l=model_gain_l;
+    prev_gain_r=model_gain_r;
+    pp=0;
+    loop(prev_npeak,
+      prev_peak_freq[pp]=peak_freq[pp];
+      prev_amp_l[pp]=peak_amp_l[pp];
+      prev_phase_l[pp]=peak_phase_l[pp];
+      prev_amp_r[pp]=peak_amp_r[pp];
+      prev_phase_r[pp]=peak_phase_r[pp];
+      pp+=1;
+    );
+  ) : (
+    prev_npeak=0;
+    model_ramp=1;
+  );
+  incoming_model_only ? (
+    load_cursor=incoming_len;
+  ) : (
+    has_sample=0;
+    i=0;
+    loop(4,vo=voice_mem+i*stride;vo[0]=0;i+=1;);
+  );
+);
+loading && bridge_ready && bridge_version == load_generation ? (
+  remaining=max(0,incoming_len-load_cursor);
+  ncopy=min(4096,remaining);
+  i=0;
+  loop(ncopy,
+    idx=load_cursor+i;
+    samp_l[idx]=gmem[slot_base+64+idx];
+    samp_r[idx]=gmem[slot_base+1400064+idx];
+    i+=1;
+  );
+  load_cursor+=ncopy;
+  load_cursor>=incoming_len ? (
+    i=0;
+    loop(incoming_peaks,
+      peak_freq[i]   =gmem[slot_base+2800064+i];
+      peak_amp_l[i]  =gmem[slot_base+2800192+i];
+      peak_phase_l[i]=gmem[slot_base+2800320+i];
+      peak_amp_r[i]  =gmem[slot_base+2800448+i];
+      peak_phase_r[i]=gmem[slot_base+2800576+i];
+      i+=1;
+    );
+    incoming_model_only ? nframes=nframes : nframes=incoming_len;
+    source_sr=incoming_sr;
+    detected_note=incoming_note;
+    handoff_end=incoming_handoff;
+    npeak=incoming_peaks;
+    model_gain_l=max(0.1,min(4,incoming_gain_l));
+    model_gain_r=max(0.1,min(4,incoming_gain_r));
+    nLlo=max(0,incoming_nLlo);
+    nLmid=max(0,incoming_nLmid);
+    nLhi=max(0,incoming_nLhi);
+    nRlo=max(0,incoming_nRlo);
+    nRmid=max(0,incoming_nRmid);
+    nRhi=max(0,incoming_nRhi);
+    xfade_frames=max(1,slider12*0.001*source_sr);
+    has_sample=nframes>0 && npeak>0;
+    incoming_model_only ? 0 : (old_clip_start=-1; old_clip_end=-1;);
+    model_ramp=incoming_model_only && prev_npeak>0 ? 0 : 1;
+    last_generation=load_generation;
+    loading=0;
+  );
+);
+loading && !bridge_ready ? (loading=0;load_generation=-1;);
+
+// React to FX parameter changes, whether from native JSFX UI or companion drop window.
+clip_start=max(0,min(max(0,nframes-512),floor(nframes*slider17/10000)));
+clip_end=max(clip_start+512,min(nframes,floor(nframes*slider18/10000)));
+fade_in_frames=max(0,slider19*0.001*source_sr);
+fade_out_frames=max(1,slider20*0.001*source_sr);
+// Natural sustain body: the original PCM is looped without freezing spectra.
+ // This avoids the metallic ringing produced by static additive partials.
+ // Fade Out sets the crossfade at the loop seam, not the ADSR Note Off.
+ region_frames=max(512,clip_end-clip_start);
+ loop_start=clip_start+floor(region_frames*0.20);
+ loop_end=min(clip_end-1,max(loop_start+128,clip_start+floor(region_frames*0.65)));
+ loop_len=max(128,loop_end-loop_start);
+ loop_fade=max(1,min(loop_len*0.33,slider20*0.001*source_sr));
+ loop_return=loop_start+loop_fade;
+ // Collect MIDI with sample offsets to retain precise note timing.
+event_count=0;
+while(midirecv(midi_offset,midi_status,midi_data))(
+  event_count<128 ? (
+    event_time[event_count]=midi_offset;
+    event_status[event_count]=midi_status & 240;
+    event_note[event_count]=midi_data & 127;
+    event_velocity[event_count]=(midi_data>>8)&127;
+    event_count+=1;
+  );
+);
+event_cursor=0;
+block_sample=0;
+
+@sample
+while(event_cursor<event_count && event_time[event_cursor]<=block_sample)(
+  st=event_status[event_cursor];
+  nn=event_note[event_cursor];
+  vel=event_velocity[event_cursor];
+  st==144 && vel==0 ? st=128;
+  st==144 && vel>0 && has_sample ? (
+    chosen=-1;
+    oldest=-1;oldest_age=-1;
+    v=0;
+    loop(floor(slider6),
+      vo=voice_mem+v*stride;
+      vo[0]==0 && chosen<0 ? chosen=v;
+      vo[0]!=0 && vo[8]>oldest_age ? (oldest_age=vo[8];oldest=v;);
+      v+=1;
+    );
+    chosen<0 ? chosen=oldest;
+    slider6<=1 ? chosen=0;
+    chosen>=0 ? (
+      vo=voice_mem+chosen*stride;
+      tune=slider10>0 ? floor(detected_note/12+0.5)*12-detected_note : 0;
+      target_ratio=2^((nn-slider7+slider8+tune)/12);
+      // MONO portamento: reuse the previous voice pitch even when LEGATO
+      // is off. LEGATO only controls whether the amplitude envelope restarts.
+      mono_active=slider6<=1 && vo[0]>0;
+      legato_reuse=mono_active && slider13>0 && vo[10]>0 && vo[0]!=4;
+      glide_reuse=mono_active && slider9>0;
+      (legato_reuse || glide_reuse) ? (
+        vo[1]=nn;
+        vo[2]=vel/127;
+        vo[7]=target_ratio;
+        vo[9]=0;
+        vo[10]=1;
+        !legato_reuse ? (
+          vo[0]=1;
+          vo[3]=clip_start;
+          vo[4]=0;
+          vo[5]=0;vo[21]=0;
+          vo[8]=0;
+          vo[11]=0;vo[12]=0;vo[13]=0;vo[14]=0;
+          vo[15]=0;vo[16]=0;vo[17]=0;vo[18]=1;vo[19]=1;vo[20]=0;
+        );
+        // vo[6] intentionally retains previous pitch for GLIDE.
+      ) : (
+        vo[0]=1;
+        vo[1]=nn;
+        vo[2]=vel/127;
+        vo[3]=clip_start;
+        vo[4]=0;
+        vo[5]=0;vo[21]=0;
+        vo[6]=target_ratio;
+        vo[7]=target_ratio;
+        vo[8]=0;
+        vo[9]=0;
+        vo[10]=1;
+        vo[11]=0;vo[12]=0;vo[13]=0;vo[14]=0;
+        vo[15]=0;vo[16]=0;vo[17]=0;vo[18]=1;vo[19]=1;vo[20]=0;
+      );
+    );
+  );
+  st==128 ? (
+    v=0;
+    loop(4,
+      vo=voice_mem+v*stride;
+      vo[0]>0 && vo[1]==nn ? (
+        vo[10]=0;
+        pedal_down ? vo[9]=1 : (vo[0]=4;vo[5]=0;vo[21]=vo[4];);
+      );
+      v+=1;
+    );
+  );
+  st==176 && nn==64 ? (
+    pedal_down=vel>=64;
+    !pedal_down ? (
+      v=0;
+      loop(4,
+        vo=voice_mem+v*stride;
+        vo[0]>0 && vo[9]>0 ? (vo[0]=4;vo[5]=0;vo[21]=vo[4];vo[9]=0;);
+        v+=1;
+      );
+    );
+  );
+  st==176 && (nn==120 || nn==123) ? (
+    v=0;
+    loop(4,
+      vo=voice_mem+v*stride;
+      vo[0]>0 ? (vo[0]=4;vo[5]=0;vo[21]=vo[4];vo[9]=0;);
+      v+=1;
+    );
+  );
+  st==224 ? (
+    bend_semi=((nn+128*vel)-8192)/8192 * slider16;
+    bend_ratio=2^(bend_semi/12);
+  );
+  event_cursor+=1;
+);
+
+// 160 ms old/new spectral crossfade, independent of MIDI and handoff.
+model_ramp=min(1,model_ramp+1/max(1,srate*0.16));
+out_l=0;out_r=0;
+active_count=0;
+has_sample ? (
+  v=0;
+  loop(4,
+    vo=voice_mem+v*stride;
+    vo[0]>0 ? (
+      active_count+=1;
+      vo[8]+=1;
+      vo[6]=vo[7]+(vo[6]-vo[7])*slide_coef;
+      sample_rate_ratio=vo[6]*bend_ratio;
+      pos=vo[3];
+      vo[3]+=sample_rate_ratio*source_sr/srate;
+      // In NATURAL mode the playhead never reaches the silent sample tail.
+      // The first pass preserves the recorded attack; subsequent passes loop
+      // the stable PCM body with a real adjustable crossfade.
+      slider23<0.5 && vo[3]>=loop_end ? (
+        vo[3]=loop_return+(vo[3]-loop_end);
+      );
+      // Serum AHDSR: A -> H -> D -> S (indefinite while key held) -> R.
+      // HOLD state 5 uses vo[5] as an independent sample counter, so it does
+      // not reset the PCM playhead or interrupt the infinite Natural loop.
+      // Four genuine Serum-style ADSR stages. Every curve handle modifies
+      // the corresponding DSP slope, not just the display.
+      // vo[5] counts samples in this stage; vo[21] captures Note Off level.
+      vo[0]==1 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/attack_samples);
+        vo[4]=slider1<=0 ? 1 : env_t^attack_shape;
+        env_t>=1 ? (vo[0]=2;vo[5]=0;);
+      ) : vo[0]==2 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/decay_samples);
+        vo[4]=slider2<=0 ? sus_level : 1-(1-sus_level)*env_t^decay_shape;
+        env_t>=1 ? (vo[0]=3;vo[5]=0;);
+      ) : vo[0]==3 ? (
+        vo[4]=sus_level;
+      ) : vo[0]==4 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/release_samples);
+        vo[4]=slider4<=0 ? 0 : vo[21]*(1-env_t^release_shape);
+        env_t>=1 || vo[4]<=0.000001 ? (vo[0]=0;vo[4]=0;);
+      );
+      // The recorded attack retains its PCM timbre. During a held MIDI note
+      // the spectral phase keeps advancing beyond the sample length, so the
+      // Sustain remains indefinite until the MIDI note-off enters Release.
+      // Original PCM is untouched until the smooth, phase-aligned handoff.
+      dry_l=0;dry_r=0;
+      pos < clip_end-1 && pos >= clip_start ? (
+        p0=floor(max(0,pos));
+        interp=pos-p0;
+        dry_l=samp_l[p0]*(1-interp)+samp_l[p0+1]*interp;
+        dry_r=samp_r[p0]*(1-interp)+samp_r[p0+1]*interp;
+      );
+      // NATURAL sustain: crossfade the outgoing PCM tail to the beginning
+      // of the same sample's stable loop. The end-of-sample never truncates
+      // a held note and the natural timbre is preserved.
+      slider23<0.5 && pos>=loop_end-loop_fade && pos<loop_end ? (
+        loop_t=max(0,min(1,(pos-(loop_end-loop_fade))/max(1,loop_fade)));
+        head_pos=loop_start+loop_t*loop_fade;
+        hp0=floor(max(0,head_pos));
+        hi=head_pos-hp0;
+        head_l=samp_l[hp0]*(1-hi)+samp_l[hp0+1]*hi;
+        head_r=samp_r[hp0]*(1-hi)+samp_r[hp0+1]*hi;
+        loop_blend=loop_t*loop_t*(3-2*loop_t);
+        dry_l=dry_l*(1-loop_blend)+head_l*loop_blend;
+        dry_r=dry_r*(1-loop_blend)+head_r*loop_blend;
+      );
+      // Begin the resynthesis before the last useful body has decayed into
+      // near silence. handoff_end is estimated by the Lua model analyzer.
+      // End remains a hard upper bound; we never read PCM beyond it.
+      region_frames=max(512,clip_end-clip_start);
+      // Blend across the stable sample body (not its nearly-silent tail).
+      actual_fade=min(max(source_sr*0.12,fade_out_frames),max(256,region_frames*0.58));
+      safe_handoff=(handoff_end>clip_start && handoff_end<=clip_end) ? handoff_end : clip_end;
+      transition_end=min(clip_end,max(clip_start+actual_fade,
+                         safe_handoff+actual_fade*0.45));
+      blend=max(0,min(1,(pos-(transition_end-actual_fade))/actual_fade));
+      blend=blend*blend*(3-2*blend);
+      // Keep slider12 meaningful as transition contour; fade duration
+      // itself follows the visible right marker (slider20).
+      blend=blend^(max(0.25,min(4,slider12/90))*2^slider22);
+      // Spectral mode is optional; Natural Loop is the default.
+      // Both modes retain full MIDI-held ADSR Sustain and Release.
+      slider23<0.5 ? blend=0;
+      // Clip start fade, independent of ADSR attack.
+      // Use the note's elapsed time, NOT looping source position. Otherwise
+      // a long fade-in restarts on every loop and causes volume pumping.
+      fade_in_gain=fade_in_frames>0 ? min(1,max(0,vo[8]/max(1,fade_in_frames*srate/source_sr))) : 1;
+      fade_in_gain=fade_in_gain*fade_in_gain*(3-2*fade_in_gain);
+      fade_in_gain=fade_in_gain^(2^slider21);
+      dry_l*=fade_in_gain;
+      dry_r*=fade_in_gain;
+      syn_l=0;syn_r=0;
+      // Calculate the spectral signal slightly ahead of the overlap.
+      // This prewarms the energy/correlation estimate before audible blending.
+      blend>0 || pos >= transition_end-actual_fade-source_sr*0.045 ? (
+        p=0;
+        loop(npeak,
+          hz=peak_freq[p];
+          hz*sample_rate_ratio < srate*0.465 ? (
+            phase=2*$pi*hz*pos/source_sr;
+            drift=1+motion_depth*(sin(2*$pi*(0.27+0.019*p)*pos/source_sr+1.19*p));
+            syn_l+=peak_amp_l[p]*cos(phase+peak_phase_l[p])*drift;
+            syn_r+=peak_amp_r[p]*cos(phase+peak_phase_r[p])*drift;
+          );
+          p+=1;
+        );
+        syn_l*=model_gain_l;
+        syn_r*=model_gain_r;
+        // Updating spectral peaks while holding a note must never instantly
+        // replace a non-zero waveform. Crossfade the OLD and NEW models.
+        model_ramp<1 && prev_npeak>0 ? (
+          old_syn_l=0;old_syn_r=0;
+          pp=0;
+          loop(prev_npeak,
+            old_hz=prev_peak_freq[pp];
+            old_hz*sample_rate_ratio<srate*0.465 ? (
+              old_phase=2*$pi*old_hz*pos/source_sr;
+              old_drift=1+motion_depth*sin(2*$pi*(0.27+0.019*pp)*pos/source_sr+1.19*pp);
+              old_syn_l+=prev_amp_l[pp]*cos(old_phase+prev_phase_l[pp])*old_drift;
+              old_syn_r+=prev_amp_r[pp]*cos(old_phase+prev_phase_r[pp])*old_drift;
+            );
+            pp+=1;
+          );
+          model_blend=model_ramp*model_ramp*(3-2*model_ramp);
+          syn_l=syn_l*model_blend+old_syn_l*prev_gain_l*(1-model_blend);
+          syn_r=syn_r*model_blend+old_syn_r*prev_gain_r*(1-model_blend);
+        );
+        // NOISE=0 is strict bypass: no RNG and no stochastic residual.
+        // Residual/noise resynthesis uses fresh filtered stochastic
+        // excitation, never repeats an original sample buffer.
+        noise_mix>0 ? (
+          rL=rand(2)-1;
+          rR=rand(2)-1;
+          vo[11]+=(rL-vo[11])*low_a;
+          vo[12]+=(rL-vo[12])*high_a;
+          vo[13]+=(rR-vo[13])*low_a;
+          vo[14]+=(rR-vo[14])*high_a;
+          syn_l+=noise_mix * (nLlo*vo[11]*lo_norm + nLmid*(vo[12]-vo[11])*mid_norm + nLhi*(rL-vo[12])*hi_norm);
+          syn_r+=noise_mix * (nRlo*vo[13]*lo_norm + nRmid*(vo[14]-vo[13])*mid_norm + nRhi*(rR-vo[14])*hi_norm);
+        );
+      );
+      // Estimate dry/synthetic energy and correlation before and during the
+      // handoff. A naive linear fade can null at 50/50 when phases oppose,
+      // sounding like a tiny silence. A bounded, smoothed compensation
+      // reduces that cancellation without hard gain steps or pumping.
+      en_alpha=1-exp(-1/max(1,srate*0.018));
+      vo[15]+=(0.5*(dry_l*dry_l+dry_r*dry_r)-vo[15])*en_alpha;
+      vo[16]+=(0.5*(syn_l*syn_l+syn_r*syn_r)-vo[16])*en_alpha;
+      vo[17]+=(0.5*(dry_l*syn_l+dry_r*syn_r)-vo[17])*en_alpha;
+      // Freeze a single polarity decision when entering the transition.
+      // Anti-phase source and model can otherwise cancel exactly at 50/50.
+      blend>0.025 && vo[20]<0.5 && vo[16]>0.0000000001 ? (
+        vo[19]=(vo[17] < (-0.23 * sqrt(max(0.000000000001,vo[15]*vo[16])))) ? -1 : 1;
+        vo[20]=1;
+      );
+      vo[19]<0 ? (
+        syn_l=-syn_l; syn_r=-syn_r;
+        vo[17]=-vo[17];
+      );
+      a=1-blend;
+      predicted=max(0,a*a*vo[15]+blend*blend*vo[16]+2*a*blend*vo[17]);
+      desired=max(0,a*vo[15]+blend*vo[16]);
+      boost=blend>0 && blend<1 ? min(1.65,max(1,sqrt((desired+0.0000000001)/(predicted+0.0000000001)))) : 1;
+      vo[18]+=(boost-vo[18])*(1-exp(-1/max(1,srate*0.010)));
+      vgain=vo[2]*vo[4]*vo[18];
+      out_l+=(a*dry_l+blend*syn_l)*vgain;
+      out_r+=(a*dry_r+blend*syn_r)*vgain;
+    );
+    v+=1;
+  );
+);
+spl0=out_l*output_gain;
+spl1=out_r*output_gain;
+block_sample+=1;
+
+
+@gfx 1080 930
+// MOONAR RESYNTH - custom GUI, designed for the REAPER JSFX gfx API.
+// This interface is deliberately inspired by the supplied dark-red reference,
+// while all branding, graphic assets and control artwork are independently drawn.
+// Import remains a ReaScript action: JSFX cannot launch REAPER's file picker.
+
+function ui_fill(x,y,w,h,red,green,blue,alpha)(
+  gfx_set(red,green,blue,alpha);
+  gfx_rect(ui_ox+x*ui_s,ui_oy+y*ui_s,w*ui_s,h*ui_s);
+);
+function ui_stroke(x,y,w,h,red,green,blue,alpha)(
+  gfx_set(red,green,blue,alpha);
+  gfx_roundrect(ui_ox+x*ui_s,ui_oy+y*ui_s,w*ui_s,h*ui_s,2*ui_s,1);
+);
+function ui_line(x1,y1,x2,y2,red,green,blue,alpha)(
+  gfx_set(red,green,blue,alpha);
+  gfx_line(ui_ox+x1*ui_s,ui_oy+y1*ui_s,ui_ox+x2*ui_s,ui_oy+y2*ui_s,1);
+);
+function ui_circle(x,y,r,red,green,blue,alpha,filled)(
+  gfx_set(red,green,blue,alpha);
+  gfx_circle(ui_ox+x*ui_s,ui_oy+y*ui_s,r*ui_s,filled,1);
+);
+function ui_text(x,y,str,size,red,green,blue)(
+  gfx_setfont(1,"Arial",max(8,floor(size*ui_s)));
+  gfx_set(red,green,blue,1);
+  gfx_x=ui_ox+x*ui_s;
+  gfx_y=ui_oy+y*ui_s;
+  gfx_drawstr(str);
+);
+function ui_panel(x,y,w,h)(
+  ui_fill(x+4,y+5,w,h,0.035,0.013,0.019,0.54);
+  ui_fill(x,y,w,h,0.11,0.125,0.142,1);
+  ui_fill(x,y,w,24,0.17,0.18,0.19,0.66);
+  ui_stroke(x,y,w,h,0.015,0.021,0.028,0.93);
+  ui_stroke(x+2,y+2,w-4,h-4,0.34,0.36,0.36,0.16);
+);
+function ui_knob(cx,cy,r,norm,label,value,flavor)(
+  norm=max(0,min(1,norm));
+  ui_text(cx-39,cy-73,label,13,0.88,0.89,0.91);
+  ui_circle(cx+2,cy+4,r+7,0.015,0.017,0.022,0.92,1);
+  ui_circle(cx,cy,r+4,0.23,0.24,0.26,1,1);
+  ui_circle(cx,cy,r,0.07,0.075,0.085,1,1);
+  // 48-piece arc, independent of the original brand's graphics.
+  aa=0;
+  loop(48,
+    ang1=2.35+aa*4.69/48;
+    ang2=2.35+(aa+0.78)*4.69/48;
+    flavor==0 ? (cr=0.97;cg=0.65;cb=0.19;) : (cr=0.74;cg=0.91;cb=0.86;);
+    aa/48<=norm ? (
+      ui_line(cx+cos(ang1)*(r+5),cy+sin(ang1)*(r+5),cx+cos(ang2)*(r+5),cy+sin(ang2)*(r+5),cr,cg,cb,1);
+      ui_line(cx+cos(ang1)*(r+6),cy+sin(ang1)*(r+6),cx+cos(ang2)*(r+6),cy+sin(ang2)*(r+6),cr,cg,cb,0.44);
+    ) : (
+      ui_line(cx+cos(ang1)*(r+5),cy+sin(ang1)*(r+5),cx+cos(ang2)*(r+5),cy+sin(ang2)*(r+5),0.3,0.32,0.34,1);
+    );
+    aa+=1;
+  );
+  ui_circle(cx,cy,r-5,0.13,0.14,0.155,1,1);
+  ui_circle(cx-4,cy-6,r-13,0.16,0.17,0.19,0.75,1);
+  indic=2.35+norm*4.69;
+  ui_line(cx,cy,cx+cos(indic)*(r-11),cy+sin(indic)*(r-11),0.98,0.98,0.95,1);
+  ui_fill(cx-48,cy+r+19,96,29,0.042,0.049,0.059,1);
+  ui_stroke(cx-48,cy+r+19,96,29,0.22,0.24,0.27,1);
+  ui_text(cx-39,cy+r+25,value,13,0.87,0.89,0.91);
+);
+function ui_mini_knob(cx,cy,norm,label,value)(
+  norm=max(0,min(1,norm));
+  ui_circle(cx+1,cy+2,17,0.02,0.025,0.030,1,1);
+  ui_circle(cx,cy,14,0.19,0.20,0.21,1,1);
+  ui_circle(cx,cy,11,0.075,0.08,0.09,1,1);
+  angle=2.35+norm*4.69;
+  ui_line(cx,cy,cx+cos(angle)*10,cy+sin(angle)*10,0.98,0.75,0.32,1);
+  ui_text(cx+23,cy-17,label,11,0.89,0.89,0.90);
+  ui_text(cx+23,cy+3,value,11,0.61,0.80,0.76);
+);
+function ui_button(x,y,w,h,title,on,accent)(
+  on ? ui_fill(x,y,w,h,accent?0.23:0.19,accent?0.66:0.68,accent?0.63:0.65,1)
+     : ui_fill(x,y,w,h,0.073,0.083,0.099,1);
+  ui_stroke(x,y,w,h,on?0.33:0.25,on?0.76:0.29,on?0.75:0.34,1);
+  on ? ui_text(x+13,y+8,title,13,0.04,0.12,0.13)
+     : ui_text(x+13,y+8,title,13,0.85,0.87,0.88);
+);
+
+// Uniform scaling; panel coordinates remain fixed and mouse hitboxes match.
+ui_s=min(gfx_w/1080,gfx_h/930);
+ui_s=max(0.20,ui_s);
+ui_ox=(gfx_w-1080*ui_s)*0.5;
+ui_oy=(gfx_h-930*ui_s)*0.5;
+mx=(mouse_x-ui_ox)/ui_s;
+my=(mouse_y-ui_oy)/ui_s;
+mb=(mouse_cap&1)!=0;
+newclick=mb && !last_mb;
+
+// Mouse wheel on footer parameters; edits actual FX sliders.
+mouse_wheel!=0 ? (
+  mouse_step=sign(mouse_wheel);
+  (mx-295)^2+(my-869)^2<625 ? (
+    slider5=max(-36,min(12,slider5+mouse_step*0.5));
+    sliderchange(16);slider_automate(16);mouse_wheel=0;
+  );
+  (mx-416)^2+(my-869)^2<625 ? (
+    slider15=max(0,min(100,slider15+mouse_step));
+    sliderchange(16384);slider_automate(16384);mouse_wheel=0;
+  );
+  (mx-537)^2+(my-869)^2<625 ? (
+    slider14=max(0,min(100,slider14+mouse_step));
+    sliderchange(8192);slider_automate(8192);mouse_wheel=0;
+  );
+  (mx-658)^2+(my-869)^2<625 ? (
+    slider9=max(0,min(1000,slider9+mouse_step*10));
+    slider9>0 && slider6>1 ? (slider6=1;sliderchange(32);slider_automate(32););
+    sliderchange(256);slider_automate(256);mouse_wheel=0;
+  );
+);
+// True knob drags edit real REAPER sliders and preserve FX automation.
+// Input: scroll or drag any knob; drag both trim locators and fade handles.
+// These inputs edit real REAPER slider values, not visual-only state.
+mouse_wheel != 0 && has_sample ? (
+  wtrim0=301+716*slider17/10000;
+  wtrim1=301+716*slider18/10000;
+  wfi=wtrim0+716*(slider19*0.001*source_sr)/max(1,nframes);
+  wfo=wtrim1-716*(slider20*0.001*source_sr)/max(1,nframes);
+  my<188 && abs(mx-wfi)<20 ? (
+    slider21=max(-1.5,min(1.5,slider21+0.1*sign(mouse_wheel)));
+    sliderchange(1048576);slider_automate(1048576);
+    mouse_wheel=0;
+  );
+  my>307 && abs(mx-wfo)<20 ? (
+    slider22=max(-1.5,min(1.5,slider22+0.1*sign(mouse_wheel)));
+    sliderchange(2097152);slider_automate(2097152);
+    mouse_wheel=0;
+  );
+);
+newclick ? (
+  drag_id=0;
+  wave_x0=301; wave_w=716;
+  trimx0=wave_x0+wave_w*slider17/10000;
+  trimx1=wave_x0+wave_w*slider18/10000;
+  fade_in_x=trimx0+wave_w*(slider19*0.001*source_sr)/max(1,nframes);
+  fade_out_x=trimx1-wave_w*(slider20*0.001*source_sr)/max(1,nframes);
+  (my>=147 && my<=348 && has_sample) ? (
+    my<187 && abs(mx-fade_in_x)<17 ? drag_id=22 :
+    my>309 && abs(mx-fade_out_x)<17 ? drag_id=23 :
+    abs(mx-trimx0)<15 ? drag_id=20 :
+    abs(mx-trimx1)<15 ? drag_id=21 : 0;
+  );
+  drag_id==0 && my>=440 && my<630 ? (
+    // Serum AHDSR: Attack, Hold (only when nonzero), Decay and Release.
+    // Decay moves the release endpoint with it; no extra guide markers.
+    abs(mx-plot_rel_x)<19 && abs(my-plotbottom)<23 ? drag_id=32 :
+    abs(mx-plot_decay_x)<19 && abs(my-(plotbottom-sv*plotheight))<25 ? (
+      drag_id=(mouse_cap&8) ? 33 : 31;
+    ) :
+    slider24>0 && abs(mx-plot_hold_x)<18 && abs(my-(plotbottom-plotheight))<23 ? drag_id=34 :
+    abs(mx-plot_attack_x)<19 ? drag_id=30 : 0;
+  );
+  drag_id==0 ? (
+    dx=mx-190;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=1;
+    dx=mx-372;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=2;
+    dx=mx-554;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=3;
+    dx=mx-736;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=4;
+    dx=mx-920;dy=my-735; dx*dx+dy*dy<3000 ? drag_id=5;
+    dx=mx-326;dy=my-375; dx*dx+dy*dy<700 ? drag_id=6;
+    dx=mx-658;dy=my-869; dx*dx+dy*dy<700 ? drag_id=7;
+    dx=mx-295;dy=my-869; dx*dx+dy*dy<700 ? drag_id=8;
+    dx=mx-416;dy=my-869; dx*dx+dy*dy<700 ? drag_id=9;
+    dx=mx-537;dy=my-869; dx*dx+dy*dy<700 ? drag_id=10;
+  );
+  drag_start_y=my;
+  drag_initial=0;
+  drag_id==1 ? drag_initial=log(1+slider1/100)/log(321);
+  drag_id==2 ? drag_initial=log(1+slider24/100)/log(321);
+  drag_id==3 ? drag_initial=log(1+slider2/100)/log(321);
+  drag_id==4 ? drag_initial=(slider3+48)/48;
+  drag_id==5 ? drag_initial=log(1+slider4/100)/log(321);
+  drag_id==6 ? drag_initial=(slider8+12)/24;
+  drag_id==7 ? drag_initial=slider9/1000;
+  drag_id==8 ? drag_initial=(slider5+36)/48;
+  drag_id==9 ? drag_initial=slider15/100;
+  drag_id==10 ? drag_initial=slider14/100;
+  drag_id==0 ? (
+    mx>569 && mx<608 && my>52 && my<91 ? preset_index=max(0,preset_index-1);
+    mx>842 && mx<884 && my>52 && my<91 ? preset_index=min(3,preset_index+1);
+    (mx>569 && mx<608 || mx>842 && mx<884) && my>52 && my<91 ? (
+      preset_index==0 ? (slider1=0;slider2=200;slider3=0;slider4=650;);
+      preset_index==1 ? (slider1=330;slider2=1700;slider3=-4;slider4=2500;);
+      preset_index==2 ? (slider1=0;slider2=220;slider3=-28;slider4=150;);
+      preset_index==3 ? (slider1=5;slider2=500;slider3=-7;slider4=1300;);
+      sliderchange(15); slider_automate(15);
+    );
+    mx>889 && mx<1034 && my>45 && my<99 ? help_frames=210;
+    mx>755 && mx<868 && my>855 && my<885 ? (slider13=1-slider13;sliderchange(4096);slider_automate(4096););
+    mx>887 && mx<962 && my>855 && my<885 ? (slider6=1;sliderchange(32);slider_automate(32););
+    mx>=962 && mx<1030 && my>855 && my<885 ? (slider6=4;sliderchange(32);slider_automate(32););
+    mx>721 && mx<872 && my>364 && my<397 ? (slider10=1-slider10;sliderchange(512);slider_automate(512););
+    mx>878 && mx<1025 && my>364 && my<397 ? (slider12=slider12>=160 ? 30 : slider12+30;sliderchange(2048);slider_automate(2048););
+  );
+);
+mb && drag_id>0 ? (
+  norm=max(0,min(1,drag_initial+(drag_start_y-my)/180));
+  drag_id==1 ? (slider1=100*(321^norm-1);sliderchange(1);slider_automate(1););
+  drag_id==2 ? (slider24=100*(321^norm-1);sliderchange(8388608);slider_automate(8388608););
+  drag_id==3 ? (slider2=100*(321^norm-1);sliderchange(2);slider_automate(2););
+  drag_id==4 ? (slider3=-48+norm*48;sliderchange(4);slider_automate(4););
+  drag_id==5 ? (slider4=100*(321^norm-1);sliderchange(8);slider_automate(8););
+  drag_id==6 ? (slider8=-12+norm*24;sliderchange(128);slider_automate(128););
+  drag_id==7 ? (
+    slider9=norm*1000;sliderchange(256);slider_automate(256);
+    slider9>0 && slider6>1 ? (slider6=1;sliderchange(32);slider_automate(32););
+  );
+  drag_id==8 ? (slider5=-36+norm*48;sliderchange(16);slider_automate(16););
+  drag_id==9 ? (slider15=norm*100;sliderchange(16384);slider_automate(16384););
+  drag_id==10 ? (slider14=norm*100;sliderchange(8192);slider_automate(8192););
+  (drag_id==20 || drag_id==21) && has_sample ? (
+    targetpct=max(0,min(10000,(mx-301)/716*10000));
+    drag_id==20 ? (slider17=min(slider18-20,targetpct);sliderchange(65536);slider_automate(65536);) :
+    (slider18=max(slider17+20,targetpct);sliderchange(131072);slider_automate(131072););
+  );
+  (drag_id==22 || drag_id==23) && has_sample ? (
+    targetframes=(mx-301)/716*nframes;
+    drag_id==22 ? (slider19=max(0,min(300,(targetframes-nframes*slider17/10000)/source_sr*1000));sliderchange(262144);slider_automate(262144);) :
+    (slider20=max(0,min(300,(nframes*slider18/10000-targetframes)/source_sr*1000));sliderchange(524288);slider_automate(524288););
+  );
+  drag_id==30 ? (slider1=max(0,min(32000,(mx-plotx)/max(0.01,plot_pps)*1000));sliderchange(1);slider_automate(1););
+  drag_id==34 ? (slider24=max(0,min(32000,(mx-plot_attack_x)/max(0.01,plot_pps)*1000));sliderchange(8388608);slider_automate(8388608););
+  drag_id==31 ? (slider2=max(0,min(32000,(mx-plot_hold_x)/max(0.01,plot_pps)*1000));sliderchange(2);slider_automate(2););
+  drag_id==32 ? (slider4=max(0,min(32000,(mx-plot_decay_x)/max(0.01,plot_pps)*1000));sliderchange(8);slider_automate(8););
+  drag_id==33 ? (slider3=max(-48,min(0,20*log(max(0.00398107,(plotbottom-my)/plotheight))/log(10)));sliderchange(4);slider_automate(4););
+);
+!mb && drag_id>0 ? (
+  drag_id==1 || drag_id==30 ? slider_automate(1,1);
+  drag_id==2 || drag_id==34 ? slider_automate(8388608,1);
+  drag_id==3 || drag_id==31 ? slider_automate(2,1);
+  drag_id==4 || drag_id==33 ? slider_automate(4,1);
+  drag_id==5 || drag_id==32 ? slider_automate(8,1);
+  drag_id==8 ? slider_automate(16,1);
+);
+!mb ? drag_id=0;
+last_mb=mb;
+help_frames>0 ? help_frames-=1;
+
+// Textured dark burgundy cabinet with subtle fixed speckle texture.
+ui_fill(0,0,1080,930,0.27,0.052,0.074,1);
+ib=0;
+loop(116,
+  amount=ib/116;
+  ui_fill(0,ib*8.1,1080,8.2,0.31-amount*0.08,0.07-amount*0.012,0.090-amount*0.015,0.60);
+  ib+=1;
+);
+q=0;
+loop(240,
+  sx=(q*683+51)%1080;
+  sy=(q*227+103)%930;
+  strength=0.04+0.08*(0.5+0.5*sin(q*4.711));
+  ui_fill(sx,sy,1.5,1.3,0.95,0.59,0.56,strength);
+  q+=1;
+);
+
+// Top brand, centered preset chooser, and sample-import help button.
+ui_text(45,30,"MOONAR",43,1,0.98,0.97);
+ui_text(247,42,"RESYNTH",24,0.89,0.93,0.92);
+ui_text(247,73,"NATURAL LOOP / SERUM AHDSR   /   V 0.6.5",11,0.40,0.81,0.75);
+ui_fill(568,49,305,48,0.04,0.075,0.112,1);
+ui_stroke(568,49,305,48,0.013,0.023,0.039,1);
+ui_text(576,56,"<",25,0.60,0.78,0.91);
+ui_text(845,56,">",25,0.60,0.78,0.91);
+preset_index==0 ? ui_text(614,62,"CLASSIC",18,0.88,0.94,0.98);
+preset_index==1 ? ui_text(614,62,"SOFT PAD",18,0.88,0.94,0.98);
+preset_index==2 ? ui_text(614,62,"SHORT PLUCK",18,0.88,0.94,0.98);
+preset_index==3 ? ui_text(614,62,"LONG BASS",18,0.88,0.94,0.98);
+ui_fill(890,47,145,52,0.13,0.15,0.17,1);
+ui_stroke(890,47,145,52,0.015,0.021,0.025,1);
+ui_circle(911,73,8,0.96,0.60,0.15,1,1);
+ui_text(927,64,"LOAD SAMPLE",13,0.94,0.94,0.93);
+
+// Sample browser + waveform viewer.
+ui_panel(44,128,990,282);
+ui_fill(61,146,225,236,0.041,0.049,0.057,1);
+ui_fill(67,154,213,34,0.028,0.036,0.043,1);
+ui_text(80,163,"SAMPLE LIBRARY",13,0.54,0.64,0.70);
+ui_fill(67,195,213,58,0.09,0.20,0.20,1);
+ui_fill(67,195,4,58,0.29,0.81,0.73,1);
+has_sample ? (
+  ui_text(83,203,"IMPORTED SAMPLE",14,0.90,0.96,0.95);
+  sprintf(#library_info,"%.2f sec   /   %d partials",nframes/max(1,source_sr),npeak);
+  ui_text(83,229,#library_info,12,0.56,0.76,0.73);
+) : (
+  ui_text(83,209,"NO AUDIO LOADED",13,0.85,0.92,0.92);
+);
+ui_text(79,285,"SOURCE",12,0.49,0.59,0.61);
+ui_text(79,309,"Mono / stereo WAV",12,0.76,0.81,0.81);
+ui_text(79,342,"Load through REAPER",12,0.49,0.59,0.61);
+
+// Wave viewport background & horizontal grid.
+wx=301;wy=147;ww=716;wh=201;
+ui_fill(wx,wy,ww,wh,0.013,0.029,0.031,1);
+ui_fill(wx,wy,ww*0.75,wh,0.038,0.119,0.112,0.56);
+j=1;
+loop(6,
+  gx=wx+j*ww/7;
+  ui_line(gx,wy+4,gx,wy+wh-4,0.17,0.29,0.29,0.27);
+  j+=1;
+);
+ui_line(wx,wy+wh*0.5,wx+ww,wy+wh*0.5,0.21,0.40,0.39,0.4);
+has_sample ? (
+  startx=wx+ww*slider17/10000;
+  endx=wx+ww*slider18/10000;
+  ui_fill(wx,wy,max(0,startx-wx),wh,0.002,0.008,0.01,0.78);
+  ui_fill(endx,wy,max(0,wx+ww-endx),wh,0.002,0.008,0.01,0.78);
+  ui_fill(startx,wy,max(1,endx-startx),wh,0.08,0.31,0.28,0.20);
+  xpos=0;
+  loop(ww,
+    from=floor(xpos/max(1,ww-1)*(nframes-1));
+    dt=max(1,floor(nframes/max(1,ww)));
+    mn=2;ma=-2;
+    ss=0;
+    loop(7,
+      si=min(nframes-1,from+floor(ss*dt/7));
+      amp=max(abs(samp_l[si]),abs(samp_r[si]));
+      mn=min(mn,-amp);ma=max(ma,amp);
+      ss+=1;
+    );
+    hh=wh*0.42;
+    ytop=wy+wh*0.5-max(-hh,min(hh,ma*hh*2.0));
+    ybot=wy+wh*0.5-max(-hh,min(hh,mn*hh*2.0));
+    ui_line(wx+xpos,ytop,wx+xpos,max(ytop+1,ybot),0.35,0.84,0.77,0.88);
+    xpos+=1;
+  );
+  // Shade unselected PCM and show draggable edit cursors.
+  ui_fill(wx,wy,max(0,startx-wx),wh,0.003,0.007,0.009,0.55);
+  ui_fill(endx,wy,max(0,wx+ww-endx),wh,0.003,0.007,0.009,0.55);
+  ui_line(startx,wy+1,startx,wy+wh-1,0.35,0.95,0.84,1);
+  ui_line(endx,wy+1,endx,wy+wh-1,0.35,0.95,0.84,1);
+  ui_circle(startx,wy+wh*0.52,8,0.35,0.95,0.84,1,1);
+  ui_circle(endx,wy+wh*0.52,8,0.35,0.95,0.84,1,1);
+  fadeix=min(endx,startx+ww*(slider19*0.001*source_sr)/max(1,nframes));
+  fadeox=max(startx,endx-ww*(slider20*0.001*source_sr)/max(1,nframes));
+  ui_line(startx,wy+wh*0.5,fadeix,wy+3,0.98,0.69,0.30,1);
+  ui_line(fadeox,wy+wh-4,endx,wy+wh*0.5,0.98,0.69,0.30,1);
+  ui_circle(fadeix,wy+4,6,0.98,0.69,0.30,1,1);
+  ui_circle(fadeox,wy+wh-4,6,0.98,0.69,0.30,1,1);
+  sprintf(#region_info,"START %.2fs   END %.2fs   LENGTH %.2fs",nframes*slider17/10000/source_sr,nframes*slider18/10000/source_sr,nframes*(slider18-slider17)/10000/source_sr);
+  ui_text(wx+12,wy+wh-21,#region_info,12,0.70,0.95,0.90);
+  ui_text(wx+12,wy+12,"CENTER: START/END / EDGE: FADES / WHEEL: BEND",12,0.58,0.94,0.85);
+) : (
+  ui_text(wx+106,wy+72,"SELECT AN AUDIO ITEM IN REAPER",19,0.56,0.78,0.73);
+  ui_text(wx+144,wy+108,"THEN RUN THE MOONAR IMPORT ACTION",13,0.63,0.70,0.72);
+);
+ui_stroke(wx,wy,ww,wh,0.24,0.30,0.31,1);
+ui_text(376,369,"PITCH",12,0.88,0.89,0.90);
+ui_circle(326,375,23,0.03,0.04,0.047,1,1);
+ui_circle(326,375,16,0.12,0.13,0.14,1,1);
+pitch_angle=2.35+(slider8+12)/24*4.69;
+ui_line(326,375,326+cos(pitch_angle)*13,375+sin(pitch_angle)*13,0.70,0.90,0.87,1);
+sprintf(#pitch_val,"%+.2f st",slider8);
+ui_fill(436,359,104,33,0.039,0.047,0.056,1);
+ui_stroke(436,359,104,33,0.23,0.25,0.27,1);
+ui_text(452,366,#pitch_val,13,0.88,0.91,0.92);
+has_sample ? (
+  sprintf(#sample_state,"MIDI ROOT %d",detected_note);
+  ui_text(553,366,#sample_state,12,0.69,0.73,0.72);
+) : ui_text(553,366,"WAITING FOR AUDIO",12,0.69,0.73,0.72);
+// Footer readouts double as interactive toggles for tuning / crossfade.
+ui_fill(722,359,146,35,slider10>0?0.078:0.065,slider10>0?0.22:0.087,slider10>0?0.20:0.10,1);
+ui_stroke(722,359,146,35,0.27,0.37,0.37,1);
+ui_text(734,368,slider10>0 ? "AUTO C : ON" : "AUTO C : OFF",12,0.69,0.92,0.84);
+ui_fill(877,359,142,35,0.076,0.094,0.11,1);
+ui_stroke(877,359,142,35,0.25,0.28,0.31,1);
+sprintf(#fade_info,"BEND  %d",floor(slider12));
+ui_text(888,368,#fade_info,12,0.84,0.85,0.86);
+
+// ADSR visual panel, animated spectrogram-inspired stroke and shaped area.
+ui_panel(44,427,990,400);
+ui_fill(61,443,954,189,0.028,0.035,0.039,1);
+gidx=1;
+loop(5,
+  ui_line(70+gidx*932/6,448,70+gidx*932/6,627,0.23,0.26,0.27,0.45);
+  gidx+=1;
+);
+plotx=72;ploty=454;plotw=925;plotbottom=619;plotheight=149;
+// Visible lower waveform: the *selected* PCM, normalized for display.
+// It is behind the ADSR fill, so the amber envelope remains draggable.
+has_sample && clip_end>clip_start ? (
+  env_peak=0.0001;
+  wi=0;
+  loop(440,
+    idx=min(max(0,nframes-1),floor(clip_start+(clip_end-clip_start)*wi/440));
+    env_peak=max(env_peak,max(abs(samp_l[idx]),abs(samp_r[idx])));
+    wi+=1;
+  );
+  env_gain=min(12,0.94/env_peak);
+  wi=0;
+  loop(440,
+    fidx=floor(clip_start+(clip_end-clip_start)*wi/440);
+    jdx=min(nframes-1,fidx+max(1,floor((clip_end-clip_start)/440)));
+    v0=max(abs(samp_l[fidx]),abs(samp_r[fidx]));
+    v1=max(abs(samp_l[jdx]),abs(samp_r[jdx]));
+    height0=min(32,max(v0,v1)*env_gain*32);
+    px=plotx+plotw*wi/440;
+    ui_line(px,plotbottom-32-height0,px,plotbottom-32+height0,0.29,0.87,0.79,0.88);
+    wi+=1;
+  );
+);
+// Serum-like AHDSR display: one common time axis for Attack, Hold,
+// Decay, Sustain (held until MIDI Note Off), and Release.
+atk=slider1/1000;hold=slider24/1000;dec=slider2/1000;rel=slider4/1000;
+sv=10^(slider3/20);
+env_view_s=max(3.6,atk+hold+dec+rel+0.18);
+plot_pps=plotw/env_view_s;
+plot_attack_x=plotx+atk*plot_pps;
+plot_hold_x=plot_attack_x+hold*plot_pps;
+plot_decay_x=plot_hold_x+dec*plot_pps;
+// Display assumes note-off at Decay end. Moving Decay shifts BOTH the
+// decay/sustain point and the lower Release endpoint, just like Serum.
+plot_release_start=plot_decay_x;
+plot_rel_x=plot_decay_x+rel*plot_pps;
+// Piecewise gain follows the same envelope stages as the audio engine.
+// Release uses an exponential curve. No invented top/bottom guide nodes.
+ps=0;pxprev=plotx;pyprev=plotbottom;
+loop(232,
+  xx=plotx+plotw*ps/231;
+  xx<plot_attack_x ? env=max(0,(xx-plotx)/max(0.0001,plot_attack_x-plotx)) :
+  xx<plot_hold_x ? env=1 :
+  xx<plot_decay_x ? env=1-(1-sv)*(xx-plot_hold_x)/max(0.0001,plot_decay_x-plot_hold_x) :
+  xx<plot_rel_x ? env=sv*exp(-6.907755*(xx-plot_decay_x)/max(0.0001,plot_rel_x-plot_decay_x)) : env=0;
+  yy=plotbottom-env*plotheight;
+  ui_line(xx,yy,xx,plotbottom,0.27,0.65,0.57,0.18);
+  ps>0 ? ui_line(pxprev,pyprev,xx,yy,0.98,0.67,0.24,1);
+  pxprev=xx;pyprev=yy;
+  ps+=1;
+);
+slider1<=0 ? ui_line(plotx,plotbottom,plotx,plotbottom-plotheight,0.99,0.72,0.32,1);
+slider2<=0 ? ui_line(plot_hold_x,plotbottom-plotheight,plot_decay_x,plotbottom-sv*plotheight,0.99,0.72,0.32,1);
+slider4<=0 ? ui_line(plot_decay_x,plotbottom-sv*plotheight,plot_rel_x,plotbottom,0.99,0.72,0.32,1);
+ui_circle(plotx,plotbottom,5,0.97,0.69,0.26,1,1);
+ui_circle(plot_attack_x,plotbottom-plotheight,9,0.97,0.69,0.26,1,1);
+slider24>0 && abs(plot_hold_x-plot_attack_x)>5 ?
+  ui_circle(plot_hold_x,plotbottom-plotheight,8,0.97,0.69,0.26,1,1);
+ui_circle(plot_decay_x,plotbottom-sv*plotheight,9,0.97,0.69,0.26,1,1);
+ui_circle(plot_rel_x,plotbottom,9,0.97,0.69,0.26,1,1);
+ui_text(75,449,"AHDSR ENVELOPE / SERUM TIMELINE",12,0.55,0.68,0.69);
+ui_text(76,636,"0",11,0.62,0.67,0.66);
+ti=1;
+loop(3,
+  sprintf(#tick,"%.1fs",env_view_s*ti/4);
+  ui_text(plotx+plotw*ti/4-13,636,#tick,10,0.56,0.63,0.63);
+  ti+=1;
+);
+slider1>=1000 ? sprintf(#a_val,"%.2f s",slider1/1000) : sprintf(#a_val,"%.0f ms",slider1);
+slider24>=1000 ? sprintf(#h_val,"%.2f s",slider24/1000) : sprintf(#h_val,"%.0f ms",slider24);
+slider2>=1000 ? sprintf(#d_val,"%.2f s",slider2/1000) : sprintf(#d_val,"%.0f ms",slider2);
+sprintf(#s_val,"%.1f dB",slider3);
+slider4>=1000 ? sprintf(#r_val,"%.2f s",slider4/1000) : sprintf(#r_val,"%.0f ms",slider4);
+sprintf(#v_val,"%+.1f dB",slider5);
+ui_knob(190,735,35,log(1+slider1/100)/log(321),"ATTACK",#a_val,0);
+ui_knob(372,735,35,log(1+slider24/100)/log(321),"HOLD",#h_val,0);
+ui_knob(554,735,35,log(1+slider2/100)/log(321),"DECAY",#d_val,0);
+ui_knob(736,735,35,(slider3+48)/48,"SUSTAIN",#s_val,0);
+ui_knob(920,735,35,log(1+slider4/100)/log(321),"RELEASE",#r_val,0);
+
+// Footer strip with real glide/legato/mode controls.
+ui_panel(44,837,990,65);
+sprintf(#noise_val,"%.0f%%",slider15);
+sprintf(#motion_val,"%.0f%%",slider14);
+sprintf(#glide,"%.0f ms",slider9);
+ui_mini_knob(295,869,(slider5+36)/48,"LEVEL",#v_val);
+ui_mini_knob(416,869,slider15/100,"NOISE",#noise_val);
+ui_mini_knob(537,869,slider14/100,"MOTION",#motion_val);
+ui_mini_knob(658,869,slider9/1000,"GLIDE",#glide);
+ui_button(755,854,112,33,"LEGATO",slider13>0,0);
+ui_button(886,854,74,33,"MONO",slider6<=1,1);
+ui_button(960,854,72,33,"POLY",slider6>1,1);
+ui_text(64,856,"MOONAR  /  DSP",13,0.88,0.90,0.88);
+loading ? ui_text(64,877,"IMPORTING SAMPLE...",11,0.95,0.69,0.23)
+: has_sample ? (
+  sprintf(#footer,"%d VOICES  |  %d PARTIALS  |  SPECTRAL ENGINE",active_count,npeak);
+  ui_text(64,877,"SAMPLE READY  /  MIDI IN",10,0.55,0.72,0.69);
+) : ui_text(64,877,"NO AUDIO LOADED",10,0.79,0.67,0.55);
+
+// Import explanation: the button does not pretend to open a file dialog.
+help_frames>0 ? (
+  ui_fill(290,315,735,70,0.042,0.06,0.067,0.99);
+  ui_stroke(290,315,735,70,0.3,0.78,0.66,1);
+  ui_text(307,326,"TO LOAD A SAMPLE:",16,0.82,0.94,0.87);
+  ui_text(307,352,"Drop a file in the MOONAR 0.5.1 control window",13,0.71,0.83,0.81);
+);
+
+gfx_getchar();
