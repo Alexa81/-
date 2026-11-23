@@ -1,0 +1,1019 @@
+
+desc:MOONAR Curve Lab 0.8.0 Preview
+tags:instrument sampler resynthesis
+options:gmem=MOONAR_CURVELAB_BRIDGE_08 maxmem=3100000
+in_pin:none
+out_pin:Left
+out_pin:Right
+
+// MOONAR_LAB_BUILD=0.8.1-preview
+// Independent educational sampler/resynthesis prototype, NOT Tim Hox's source.
+// Protocol version 2. Natural PCM body-loop sustain (default) or optional spectral synthesis.
+
+slider1:0<0,32000,1>-Attack (ms)
+slider2:200<0,32000,1>-Decay (ms)
+slider3:0<-48,0,0.1>-Sustain (dB)
+slider4:650<0,32000,1>-Release (ms)
+slider5:0<-36,12,0.1>-Output (dB)
+slider6:4<1,4,1>-Polyphony (voices)
+slider7:72<24,96,1>-MIDI keyboard root (C5=72)
+slider8:0<-12,12,0.01>-Fine tune (semitones)
+slider9:0<0,1000,1>-Glide (ms, mono)
+slider10:1<0,1,1{Off,On}>-Tune detected root to nearest C
+slider11:1<1,2,1>-Internal import slot (1-2)
+slider12:90<10,250,1>-Original-to-synthesis fade (ms)
+slider13:0<0,1,1{Off,On}>-Legato (mono only)
+slider14:0<0,100,1>-Organic harmonic motion (%)
+slider15:0<0,100,1>-Residual noise body (%)
+slider16:2<0,12,1>-Pitch bend range (semitones)
+slider17:0<0,10000,1>-Trim Start (0-100%)
+slider18:10000<1,10000,1>-Trim End (0-100%)
+slider19:5<0,300,1>-Start Fade (ms)
+slider20:70<0,300,1>-End Fade / Synth Crossfade (ms)
+slider21:0<-1.5,1.5,0.05>-Fade In Bend
+slider22:0<-1.5,1.5,0.05>-Fade Out Bend
+slider23:0<0,1,1{Natural Loop,Spectral}>-Sustain Engine
+slider24:0<-1,1,0.01>-Attack Curve
+slider25:0<-1,1,0.01>-Decay Curve
+slider26:0<-1,1,0.01>-Release Curve
+// Original 26 parameters above remain at their original indices.
+slider27:0<0,1,1{Off,On}>-Moog-style Filter
+slider28:1200<20,20000,1>-Filter Cutoff (Hz)
+slider29:0.35<0,0.95,0.01>-Filter Resonance
+slider30:3<0,18,0.1>-Filter Drive (dB)
+slider31:2<-6,6,0.01>-Filter Envelope Depth (octaves)
+slider32:8<0,32000,1>-Filter Attack (ms)
+slider33:180<0,32000,1>-Filter Decay (ms)
+slider34:0.50<0,1,0.01>-Filter Sustain (level)
+slider35:760<0,32000,1>-Filter Release (ms)
+slider36:0<-1,1,0.01>-Filter Attack Curve
+slider37:0<-1,1,0.01>-Filter Decay Curve
+slider38:0<-1,1,0.01>-Filter Release Curve
+slider39:0<-24,24,1>-Transpose (semitones)
+
+@init
+// Local bounded saturation: do not rely on nonstandard tanh() builtins.
+function lab_tanh(input) (
+  input=max(-12,min(12,input));
+  exponent=exp(2*input);
+  (exponent-1)/(exponent+1);
+);
+ext_noinit = 1;
+initialized != 293201 ? (
+  initialized=293201;
+  samp_l=0;
+  samp_r=1400000;
+  peak_freq=2800000;
+  peak_amp_l=2800128;
+  peak_phase_l=2800256;
+  peak_amp_r=2800384;
+  peak_phase_r=2800512;
+  // Temporary previous model, used for seamless live model swaps.
+  prev_peak_freq=2800704;
+  prev_amp_l=2800832;
+  prev_phase_l=2800960;
+  prev_amp_r=2801088;
+  prev_phase_r=2801216;
+  prev_npeak=0;
+  prev_gain_l=1;
+  prev_gain_r=1;
+  model_ramp=1;
+  voice_mem=2900000;
+  event_time=2901000;
+  event_status=2901256;
+  event_note=2901512;
+  event_velocity=2901768;
+  stride=40;
+  max_frames=1323000;
+  peak_capacity=64;
+  // Do not erase restored @serialize data when @init runs on project load.
+  has_sample != 1 ? (
+    has_sample=0;
+    nframes=0;
+    source_sr=44100;
+    detected_note=72;
+    npeak=0;
+    handoff_end=0;
+    model_gain_l=1;
+    model_gain_r=1;
+    nLlo=0;nLmid=0;nLhi=0;
+    nRlo=0;nRmid=0;nRhi=0;
+  );
+  last_generation=-1;
+  load_generation=-1;
+  loading=0;
+  load_cursor=0;
+  pedal_down=0;
+  bend_semi=0;
+  bend_ratio=1;
+  i=0;
+  loop(4,
+    off=voice_mem+i*stride;
+    off[0]=0;off[5]=0;off[21]=0;
+    off[15]=0;off[16]=0;off[17]=0;off[18]=1;off[19]=1;off[20]=0;
+    z=24;loop(12,off[z]=0;z+=1;);
+    i+=1;
+  );
+);
+
+@slider
+// The SAME normalised power curve is used by audio and both GUIs:
+ // curve = -1 => ease-in, 0 => linear, +1 => ease-out.
+ // These additional mid-segment handles never add new envelope stages.
+attack_samples=max(1,slider1*srate/1000);
+decay_samples=max(1,slider2*srate/1000);
+release_samples=max(1,slider4*srate/1000);
+attack_shape=exp(-3*slider24);
+decay_shape=exp(-3*slider25);
+release_shape=exp(-3*slider26);
+sus_level=10^(slider3/20);
+output_gain = 10^(slider5/20);
+xfade_frames = max(1,slider12*0.001*source_sr);
+// Trim coordinates operate on the *entire* imported source PCM, live.
+clip_start=max(0,min(max(0,nframes-512),floor(nframes*slider17/10000)));
+clip_end=max(clip_start+512,min(nframes,floor(nframes*slider18/10000)));
+fade_in_frames=max(0,slider19*0.001*source_sr);
+fade_out_frames=max(1,slider20*0.001*source_sr);
+// Move the active playhead as the user drags a locator.
+clip_start != old_clip_start ? (
+  vv=0;
+  loop(4, vvo=voice_mem+vv*stride; vvo[0]>0 ? vvo[3]=clip_start; vv+=1;);
+  old_clip_start=clip_start;
+);
+old_clip_end=clip_end;
+slide_coef = slider9 > 0 ? exp(-6.907755*1000/(max(1,slider9)*srate)) : 0;
+noise_mix = slider15*0.01;
+motion_depth = slider14*0.001;
+filter_attack_samples=max(1,slider32*srate/1000);
+filter_decay_samples=max(1,slider33*srate/1000);
+filter_release_samples=max(1,slider35*srate/1000);
+filter_attack_shape=exp(-3*slider36);
+filter_decay_shape=exp(-3*slider37);
+filter_release_shape=exp(-3*slider38);
+filter_drive=10^(slider30/20);
+bend_ratio=2^(bend_semi/12);
+low_a=1-exp(-2*$pi*500/max(8000,srate));
+high_a=1-exp(-2*$pi*3500/max(8000,srate));
+lo_var=low_a/(2-low_a);
+hi_var=high_a/(2-high_a);
+cross_cov=(low_a*high_a)/(low_a+high_a-low_a*high_a);
+// Noise source rand(2)-1 has variance 1/3; these make each generated
+// low/mid/high band unit RMS before multiplying by measured residual RMS.
+lo_norm=sqrt(3/max(0.00001,lo_var));
+mid_norm=sqrt(3/max(0.00001,hi_var+lo_var-2*cross_cov));
+hi_norm=sqrt(3/max(0.00001,1+hi_var-2*high_a));
+
+@serialize
+// Save both PCM source and model in the REAPER project.
+file_var(0,has_sample);
+file_var(0,nframes);
+file_var(0,source_sr);
+file_var(0,detected_note);
+file_var(0,npeak);
+file_var(0,handoff_end);
+file_var(0,model_gain_l);
+file_var(0,model_gain_r);
+file_var(0,nLlo);file_var(0,nLmid);file_var(0,nLhi);
+file_var(0,nRlo);file_var(0,nRmid);file_var(0,nRhi);
+has_sample ? (
+  file_mem(0,samp_l,nframes);
+  file_mem(0,samp_r,nframes);
+  file_mem(0,peak_freq,640);
+);
+
+@block
+// Named gmem bridge. Lua writes audio + model first, commits generation last.
+slot_base=(floor(slider11)-1)*3200000;
+bridge_ready=gmem[slot_base]==1;
+bridge_version=gmem[slot_base+1];
+bridge_ready && bridge_version != last_generation && bridge_version != load_generation ? (
+  load_generation=bridge_version;
+  loading=1;
+  load_cursor=0;
+  incoming_len=min(max_frames,max(0,floor(gmem[slot_base+2])));
+  incoming_model_only=floor(gmem[slot_base+15])==1;
+  incoming_sr=max(8000,gmem[slot_base+3]);
+  incoming_note=gmem[slot_base+4];
+  incoming_peaks=min(peak_capacity,max(0,floor(gmem[slot_base+5])));
+  incoming_handoff=min(incoming_len,max(1,floor(gmem[slot_base+6])));
+  incoming_gain_l=gmem[slot_base+7];
+  incoming_gain_r=gmem[slot_base+8];
+  incoming_nLlo=gmem[slot_base+9];
+  incoming_nLmid=gmem[slot_base+10];
+  incoming_nLhi=gmem[slot_base+11];
+  incoming_nRlo=gmem[slot_base+12];
+  incoming_nRmid=gmem[slot_base+13];
+  incoming_nRhi=gmem[slot_base+14];
+  // Keep the previous spectrum alive during an update. Otherwise replacing
+  // peaks mid-note can make an audible step even though the original PCM is
+  // playing normally.
+  incoming_model_only && has_sample ? (
+    prev_npeak=npeak;
+    prev_gain_l=model_gain_l;
+    prev_gain_r=model_gain_r;
+    pp=0;
+    loop(prev_npeak,
+      prev_peak_freq[pp]=peak_freq[pp];
+      prev_amp_l[pp]=peak_amp_l[pp];
+      prev_phase_l[pp]=peak_phase_l[pp];
+      prev_amp_r[pp]=peak_amp_r[pp];
+      prev_phase_r[pp]=peak_phase_r[pp];
+      pp+=1;
+    );
+  ) : (
+    prev_npeak=0;
+    model_ramp=1;
+  );
+  incoming_model_only ? (
+    load_cursor=incoming_len;
+  ) : (
+    has_sample=0;
+    i=0;
+    loop(4,vo=voice_mem+i*stride;vo[0]=0;i+=1;);
+  );
+);
+loading && bridge_ready && bridge_version == load_generation ? (
+  remaining=max(0,incoming_len-load_cursor);
+  ncopy=min(4096,remaining);
+  i=0;
+  loop(ncopy,
+    idx=load_cursor+i;
+    samp_l[idx]=gmem[slot_base+64+idx];
+    samp_r[idx]=gmem[slot_base+1400064+idx];
+    i+=1;
+  );
+  load_cursor+=ncopy;
+  load_cursor>=incoming_len ? (
+    i=0;
+    loop(incoming_peaks,
+      peak_freq[i]   =gmem[slot_base+2800064+i];
+      peak_amp_l[i]  =gmem[slot_base+2800192+i];
+      peak_phase_l[i]=gmem[slot_base+2800320+i];
+      peak_amp_r[i]  =gmem[slot_base+2800448+i];
+      peak_phase_r[i]=gmem[slot_base+2800576+i];
+      i+=1;
+    );
+    incoming_model_only ? nframes=nframes : nframes=incoming_len;
+    source_sr=incoming_sr;
+    detected_note=incoming_note;
+    handoff_end=incoming_handoff;
+    npeak=incoming_peaks;
+    model_gain_l=max(0.1,min(4,incoming_gain_l));
+    model_gain_r=max(0.1,min(4,incoming_gain_r));
+    nLlo=max(0,incoming_nLlo);
+    nLmid=max(0,incoming_nLmid);
+    nLhi=max(0,incoming_nLhi);
+    nRlo=max(0,incoming_nRlo);
+    nRmid=max(0,incoming_nRmid);
+    nRhi=max(0,incoming_nRhi);
+    xfade_frames=max(1,slider12*0.001*source_sr);
+    has_sample=nframes>0 && npeak>0;
+    incoming_model_only ? 0 : (old_clip_start=-1; old_clip_end=-1;);
+    model_ramp=incoming_model_only && prev_npeak>0 ? 0 : 1;
+    last_generation=load_generation;
+    loading=0;
+  );
+);
+loading && !bridge_ready ? (loading=0;load_generation=-1;);
+
+// React to FX parameter changes, whether from native JSFX UI or companion drop window.
+clip_start=max(0,min(max(0,nframes-512),floor(nframes*slider17/10000)));
+clip_end=max(clip_start+512,min(nframes,floor(nframes*slider18/10000)));
+fade_in_frames=max(0,slider19*0.001*source_sr);
+fade_out_frames=max(1,slider20*0.001*source_sr);
+// Natural sustain body: the original PCM is looped without freezing spectra.
+ // This avoids the metallic ringing produced by static additive partials.
+ // Fade Out sets the crossfade at the loop seam, not the ADSR Note Off.
+ region_frames=max(512,clip_end-clip_start);
+ loop_start=clip_start+floor(region_frames*0.20);
+ loop_end=min(clip_end-1,max(loop_start+128,clip_start+floor(region_frames*0.65)));
+ loop_len=max(128,loop_end-loop_start);
+ loop_fade=max(1,min(loop_len*0.33,slider20*0.001*source_sr));
+ loop_return=loop_start+loop_fade;
+ // Collect MIDI with sample offsets to retain precise note timing.
+event_count=0;
+while(midirecv(midi_offset,midi_status,midi_data))(
+  event_count<128 ? (
+    event_time[event_count]=midi_offset;
+    event_status[event_count]=midi_status & 240;
+    event_note[event_count]=midi_data & 127;
+    event_velocity[event_count]=(midi_data>>8)&127;
+    event_count+=1;
+  );
+);
+event_cursor=0;
+block_sample=0;
+
+@sample
+while(event_cursor<event_count && event_time[event_cursor]<=block_sample)(
+  st=event_status[event_cursor];
+  nn=event_note[event_cursor];
+  vel=event_velocity[event_cursor];
+  st==144 && vel==0 ? st=128;
+  st==144 && vel>0 && has_sample ? (
+    chosen=-1;
+    oldest=-1;oldest_age=-1;
+    v=0;
+    loop(floor(slider6),
+      vo=voice_mem+v*stride;
+      vo[0]==0 && chosen<0 ? chosen=v;
+      vo[0]!=0 && vo[8]>oldest_age ? (oldest_age=vo[8];oldest=v;);
+      v+=1;
+    );
+    chosen<0 ? chosen=oldest;
+    slider6<=1 ? chosen=0;
+    chosen>=0 ? (
+      vo=voice_mem+chosen*stride;
+      tune=slider10>0 ? floor(detected_note/12+0.5)*12-detected_note : 0;
+      target_ratio=2^((nn-slider7+slider8+slider39+tune)/12);
+      // MONO portamento: reuse the previous voice pitch even when LEGATO
+      // is off. LEGATO only controls whether the amplitude envelope restarts.
+      mono_active=slider6<=1 && vo[0]>0;
+      legato_reuse=mono_active && slider13>0 && vo[10]>0 && vo[0]!=4;
+      glide_reuse=mono_active && slider9>0;
+      (legato_reuse || glide_reuse) ? (
+        vo[1]=nn;
+        vo[2]=vel/127;
+        vo[7]=target_ratio;
+        vo[9]=0;
+        vo[10]=1;
+        !legato_reuse ? (
+          vo[0]=1;
+          vo[3]=clip_start;
+          vo[4]=0;
+          vo[5]=0;vo[21]=0;
+          vo[8]=0;
+          vo[11]=0;vo[12]=0;vo[13]=0;vo[14]=0;
+          vo[15]=0;vo[16]=0;vo[17]=0;vo[18]=1;vo[19]=1;vo[20]=0;
+           vo[24]=0;vo[25]=1;vo[26]=0;vo[27]=0;
+           zz=28;loop(8,vo[zz]=0;zz+=1;);
+        );
+        // vo[6] intentionally retains previous pitch for GLIDE.
+      ) : (
+        vo[0]=1;
+        vo[1]=nn;
+        vo[2]=vel/127;
+        vo[3]=clip_start;
+        vo[4]=0;
+        vo[5]=0;vo[21]=0;
+        vo[6]=target_ratio;
+        vo[7]=target_ratio;
+        vo[8]=0;
+        vo[9]=0;
+        vo[10]=1;
+        vo[11]=0;vo[12]=0;vo[13]=0;vo[14]=0;
+        vo[15]=0;vo[16]=0;vo[17]=0;vo[18]=1;vo[19]=1;vo[20]=0;
+           vo[24]=0;vo[25]=1;vo[26]=0;vo[27]=0;
+           zz=28;loop(8,vo[zz]=0;zz+=1;);
+      );
+    );
+  );
+  st==128 ? (
+    v=0;
+    loop(4,
+      vo=voice_mem+v*stride;
+      vo[0]>0 && vo[1]==nn ? (
+        vo[10]=0;
+        pedal_down ? vo[9]=1 : (vo[0]=4;vo[5]=0;vo[21]=vo[4];vo[25]=4;vo[26]=0;vo[27]=vo[24];);
+      );
+      v+=1;
+    );
+  );
+  st==176 && nn==64 ? (
+    pedal_down=vel>=64;
+    !pedal_down ? (
+      v=0;
+      loop(4,
+        vo=voice_mem+v*stride;
+        vo[0]>0 && vo[9]>0 ? (vo[0]=4;vo[5]=0;vo[21]=vo[4];vo[25]=4;vo[26]=0;vo[27]=vo[24];vo[9]=0;);
+        v+=1;
+      );
+    );
+  );
+  st==176 && (nn==120 || nn==123) ? (
+    v=0;
+    loop(4,
+      vo=voice_mem+v*stride;
+      vo[0]>0 ? (vo[0]=4;vo[5]=0;vo[21]=vo[4];vo[25]=4;vo[26]=0;vo[27]=vo[24];vo[9]=0;);
+      v+=1;
+    );
+  );
+  st==224 ? (
+    bend_semi=((nn+128*vel)-8192)/8192 * slider16;
+    bend_ratio=2^(bend_semi/12);
+  );
+  event_cursor+=1;
+);
+
+// 160 ms old/new spectral crossfade, independent of MIDI and handoff.
+model_ramp=min(1,model_ramp+1/max(1,srate*0.16));
+out_l=0;out_r=0;
+active_count=0;
+has_sample ? (
+  v=0;
+  loop(4,
+    vo=voice_mem+v*stride;
+    vo[0]>0 ? (
+      active_count+=1;
+      vo[8]+=1;
+      vo[6]=vo[7]+(vo[6]-vo[7])*slide_coef;
+      sample_rate_ratio=vo[6]*bend_ratio;
+      pos=vo[3];
+      vo[3]+=sample_rate_ratio*source_sr/srate;
+      // In NATURAL mode the playhead never reaches the silent sample tail.
+      // The first pass preserves the recorded attack; subsequent passes loop
+      // the stable PCM body with a real adjustable crossfade.
+      slider23<0.5 && vo[3]>=loop_end ? (
+        vo[3]=loop_return+(vo[3]-loop_end);
+      );
+      // Serum AHDSR: A -> H -> D -> S (indefinite while key held) -> R.
+      // HOLD state 5 uses vo[5] as an independent sample counter, so it does
+      // not reset the PCM playhead or interrupt the infinite Natural loop.
+      // Four genuine Serum-style ADSR stages. Every curve handle modifies
+      // the corresponding DSP slope, not just the display.
+      // vo[5] counts samples in this stage; vo[21] captures Note Off level.
+      vo[0]==1 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/attack_samples);
+        vo[4]=slider1<=0 ? 1 : env_t^attack_shape;
+        env_t>=1 ? (vo[0]=2;vo[5]=0;);
+      ) : vo[0]==2 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/decay_samples);
+        vo[4]=slider2<=0 ? sus_level : 1-(1-sus_level)*env_t^decay_shape;
+        env_t>=1 ? (vo[0]=3;vo[5]=0;);
+      ) : vo[0]==3 ? (
+        vo[4]=sus_level;
+      ) : vo[0]==4 ? (
+        vo[5]+=1;
+        env_t=min(1,vo[5]/release_samples);
+        vo[4]=slider4<=0 ? 0 : vo[21]*(1-env_t^release_shape);
+        env_t>=1 || vo[4]<=0.000001 ? (vo[0]=0;vo[4]=0;);
+      );
+      // The recorded attack retains its PCM timbre. During a held MIDI note
+      // the spectral phase keeps advancing beyond the sample length, so the
+      // Sustain remains indefinite until the MIDI note-off enters Release.
+      // Original PCM is untouched until the smooth, phase-aligned handoff.
+      dry_l=0;dry_r=0;
+      pos < clip_end-1 && pos >= clip_start ? (
+        p0=floor(max(0,pos));
+        interp=pos-p0;
+        dry_l=samp_l[p0]*(1-interp)+samp_l[p0+1]*interp;
+        dry_r=samp_r[p0]*(1-interp)+samp_r[p0+1]*interp;
+      );
+      // NATURAL sustain: crossfade the outgoing PCM tail to the beginning
+      // of the same sample's stable loop. The end-of-sample never truncates
+      // a held note and the natural timbre is preserved.
+      slider23<0.5 && pos>=loop_end-loop_fade && pos<loop_end ? (
+        loop_t=max(0,min(1,(pos-(loop_end-loop_fade))/max(1,loop_fade)));
+        head_pos=loop_start+loop_t*loop_fade;
+        hp0=floor(max(0,head_pos));
+        hi=head_pos-hp0;
+        head_l=samp_l[hp0]*(1-hi)+samp_l[hp0+1]*hi;
+        head_r=samp_r[hp0]*(1-hi)+samp_r[hp0+1]*hi;
+        loop_blend=loop_t*loop_t*(3-2*loop_t);
+        dry_l=dry_l*(1-loop_blend)+head_l*loop_blend;
+        dry_r=dry_r*(1-loop_blend)+head_r*loop_blend;
+      );
+      // Begin the resynthesis before the last useful body has decayed into
+      // near silence. handoff_end is estimated by the Lua model analyzer.
+      // End remains a hard upper bound; we never read PCM beyond it.
+      region_frames=max(512,clip_end-clip_start);
+      // Blend across the stable sample body (not its nearly-silent tail).
+      actual_fade=min(max(source_sr*0.12,fade_out_frames),max(256,region_frames*0.58));
+      safe_handoff=(handoff_end>clip_start && handoff_end<=clip_end) ? handoff_end : clip_end;
+      transition_end=min(clip_end,max(clip_start+actual_fade,
+                         safe_handoff+actual_fade*0.45));
+      blend=max(0,min(1,(pos-(transition_end-actual_fade))/actual_fade));
+      blend=blend*blend*(3-2*blend);
+      // Keep slider12 meaningful as transition contour; fade duration
+      // itself follows the visible right marker (slider20).
+      blend=blend^(max(0.25,min(4,slider12/90))*2^slider22);
+      // Spectral mode is optional; Natural Loop is the default.
+      // Both modes retain full MIDI-held ADSR Sustain and Release.
+      slider23<0.5 ? blend=0;
+      // Clip start fade, independent of ADSR attack.
+      // Use the note's elapsed time, NOT looping source position. Otherwise
+      // a long fade-in restarts on every loop and causes volume pumping.
+      fade_in_gain=fade_in_frames>0 ? min(1,max(0,vo[8]/max(1,fade_in_frames*srate/source_sr))) : 1;
+      fade_in_gain=fade_in_gain*fade_in_gain*(3-2*fade_in_gain);
+      fade_in_gain=fade_in_gain^(2^slider21);
+      dry_l*=fade_in_gain;
+      dry_r*=fade_in_gain;
+      syn_l=0;syn_r=0;
+      // Calculate the spectral signal slightly ahead of the overlap.
+      // This prewarms the energy/correlation estimate before audible blending.
+      blend>0 || pos >= transition_end-actual_fade-source_sr*0.045 ? (
+        p=0;
+        loop(npeak,
+          hz=peak_freq[p];
+          hz*sample_rate_ratio < srate*0.465 ? (
+            phase=2*$pi*hz*pos/source_sr;
+            drift=1+motion_depth*(sin(2*$pi*(0.27+0.019*p)*pos/source_sr+1.19*p));
+            syn_l+=peak_amp_l[p]*cos(phase+peak_phase_l[p])*drift;
+            syn_r+=peak_amp_r[p]*cos(phase+peak_phase_r[p])*drift;
+          );
+          p+=1;
+        );
+        syn_l*=model_gain_l;
+        syn_r*=model_gain_r;
+        // Updating spectral peaks while holding a note must never instantly
+        // replace a non-zero waveform. Crossfade the OLD and NEW models.
+        model_ramp<1 && prev_npeak>0 ? (
+          old_syn_l=0;old_syn_r=0;
+          pp=0;
+          loop(prev_npeak,
+            old_hz=prev_peak_freq[pp];
+            old_hz*sample_rate_ratio<srate*0.465 ? (
+              old_phase=2*$pi*old_hz*pos/source_sr;
+              old_drift=1+motion_depth*sin(2*$pi*(0.27+0.019*pp)*pos/source_sr+1.19*pp);
+              old_syn_l+=prev_amp_l[pp]*cos(old_phase+prev_phase_l[pp])*old_drift;
+              old_syn_r+=prev_amp_r[pp]*cos(old_phase+prev_phase_r[pp])*old_drift;
+            );
+            pp+=1;
+          );
+          model_blend=model_ramp*model_ramp*(3-2*model_ramp);
+          syn_l=syn_l*model_blend+old_syn_l*prev_gain_l*(1-model_blend);
+          syn_r=syn_r*model_blend+old_syn_r*prev_gain_r*(1-model_blend);
+        );
+        // NOISE=0 is strict bypass: no RNG and no stochastic residual.
+        // Residual/noise resynthesis uses fresh filtered stochastic
+        // excitation, never repeats an original sample buffer.
+        noise_mix>0 ? (
+          rL=rand(2)-1;
+          rR=rand(2)-1;
+          vo[11]+=(rL-vo[11])*low_a;
+          vo[12]+=(rL-vo[12])*high_a;
+          vo[13]+=(rR-vo[13])*low_a;
+          vo[14]+=(rR-vo[14])*high_a;
+          syn_l+=noise_mix * (nLlo*vo[11]*lo_norm + nLmid*(vo[12]-vo[11])*mid_norm + nLhi*(rL-vo[12])*hi_norm);
+          syn_r+=noise_mix * (nRlo*vo[13]*lo_norm + nRmid*(vo[14]-vo[13])*mid_norm + nRhi*(rR-vo[14])*hi_norm);
+        );
+      );
+      // Estimate dry/synthetic energy and correlation before and during the
+      // handoff. A naive linear fade can null at 50/50 when phases oppose,
+      // sounding like a tiny silence. A bounded, smoothed compensation
+      // reduces that cancellation without hard gain steps or pumping.
+      en_alpha=1-exp(-1/max(1,srate*0.018));
+      vo[15]+=(0.5*(dry_l*dry_l+dry_r*dry_r)-vo[15])*en_alpha;
+      vo[16]+=(0.5*(syn_l*syn_l+syn_r*syn_r)-vo[16])*en_alpha;
+      vo[17]+=(0.5*(dry_l*syn_l+dry_r*syn_r)-vo[17])*en_alpha;
+      // Freeze a single polarity decision when entering the transition.
+      // Anti-phase source and model can otherwise cancel exactly at 50/50.
+      blend>0.025 && vo[20]<0.5 && vo[16]>0.0000000001 ? (
+        vo[19]=(vo[17] < (-0.23 * sqrt(max(0.000000000001,vo[15]*vo[16])))) ? -1 : 1;
+        vo[20]=1;
+      );
+      vo[19]<0 ? (
+        syn_l=-syn_l; syn_r=-syn_r;
+        vo[17]=-vo[17];
+      );
+      a=1-blend;
+      predicted=max(0,a*a*vo[15]+blend*blend*vo[16]+2*a*blend*vo[17]);
+      desired=max(0,a*vo[15]+blend*vo[16]);
+      boost=blend>0 && blend<1 ? min(1.65,max(1,sqrt((desired+0.0000000001)/(predicted+0.0000000001)))) : 1;
+      vo[18]+=(boost-vo[18])*(1-exp(-1/max(1,srate*0.010)));
+      // Dedicated per-note filter envelope, independent from AMP ADSR.
+      slider27>0 ? (
+        vo[25]==1 ? (
+          vo[26]+=1;
+          ft=min(1,vo[26]/filter_attack_samples);
+          vo[24]=slider32<=0 ? 1 : ft^filter_attack_shape;
+          ft>=1 ? (vo[25]=2;vo[26]=0;);
+        ) : vo[25]==2 ? (
+          vo[26]+=1;
+          ft=min(1,vo[26]/filter_decay_samples);
+          vo[24]=slider33<=0 ? slider34 : 1-(1-slider34)*ft^filter_decay_shape;
+          ft>=1 ? (vo[25]=3;vo[26]=0;);
+        ) : vo[25]==3 ? (
+          vo[24]=slider34;
+        ) : vo[25]==4 ? (
+          vo[26]+=1;
+          ft=min(1,vo[26]/filter_release_samples);
+          vo[24]=slider35<=0 ? 0 : vo[27]*(1-ft^filter_release_shape);
+          ft>=1 ? (vo[25]=0;vo[24]=0;);
+        );
+      );
+      mix_l=a*dry_l+blend*syn_l;
+      mix_r=a*dry_r+blend*syn_r;
+      slider27>0 ? (
+        // Stable four-stage resonant lowpass approximation with nonlinear
+        // input/feedback; inspired by ladder topology, not a hardware clone.
+        fc=max(20,min(srate*0.45,slider28*2^(slider31*vo[24])));
+        fg=1-exp(-2*$pi*fc/srate);
+        fb=slider29*3.8;
+        inl=lab_tanh((mix_l-fb*vo[31])*filter_drive);
+        inr=lab_tanh((mix_r-fb*vo[35])*filter_drive);
+        vo[28]+=fg*(inl-vo[28]);
+        vo[29]+=fg*(vo[28]-vo[29]);
+        vo[30]+=fg*(vo[29]-vo[30]);
+        vo[31]+=fg*(vo[30]-vo[31]);
+        vo[32]+=fg*(inr-vo[32]);
+        vo[33]+=fg*(vo[32]-vo[33]);
+        vo[34]+=fg*(vo[33]-vo[34]);
+        vo[35]+=fg*(vo[34]-vo[35]);
+        mix_l=vo[31]/filter_drive;
+        mix_r=vo[35]/filter_drive;
+      );
+      vgain=vo[2]*vo[4]*vo[18];
+      out_l+=mix_l*vgain;
+      out_r+=mix_r*vgain;
+    );
+    v+=1;
+  );
+);
+spl0=out_l*output_gain;
+spl1=out_r*output_gain;
+block_sample+=1;
+
+
+@gfx 1080 930
+// MOONAR Curve Lab JSFX insert monitor. Real drag/drop lives in the SINGLE Lua gfx window. All native sliders hidden.
+// The 26 original DSP controls and their automation indices are unchanged.
+function labfill(x,y,w,h,r,g,b,alpha) (
+  gfx_set(r,g,b,alpha);
+  gfx_rect(lx+x*ls,ly+y*ls,w*ls,h*ls);
+);
+function labline(x,y,x2,y2,r,g,b,alpha) (
+  gfx_set(r,g,b,alpha);
+  gfx_line(lx+x*ls,ly+y*ls,lx+x2*ls,ly+y2*ls,1);
+);
+function labcirc(x,y,rad,r,g,b) (
+  gfx_set(r,g,b,1);
+  gfx_circle(lx+x*ls,ly+y*ls,rad*ls,1,1);
+);
+function labtext(x,y,str,sz,r,g,b) (
+  gfx_setfont(1,"Arial",max(9,floor(sz*ls)));
+  gfx_set(r,g,b,1);
+  gfx_x=lx+x*ls;
+  gfx_y=ly+y*ls;
+  gfx_drawstr(str);
+);
+function labpanel(x,y,w,h) (
+  labfill(x,y,w,h,0.07,0.095,0.14,1);
+  labfill(x,y,w,2,0.25,0.18,0.36,1);
+);
+function labbutton(x,y,w,h,str,on) (
+  labfill(x,y,w,h,on?0.34:0.11,on?0.16:0.13,on?0.52:0.20,1);
+  labtext(x+12,y+7,str,15,0.94,0.88,1);
+);
+function labknob(x,y,rad,norm,title,value,green) (
+  norm=max(0,min(1,norm));
+  labcirc(x+1,y+2,rad+3,0.23,0.27,0.37);
+  labcirc(x,y,rad,0.065,0.08,0.13);
+  k=0;loop(32,
+    ka=2.35+k*4.69/31;
+    k<=norm*31 ? labline(x+cos(ka)*(rad+2),y+sin(ka)*(rad+2),x+cos(ka)*(rad+6),y+sin(ka)*(rad+6),green?0.35:0.80,green?0.99:0.42,green?0.70:1,1);
+    k+=1;
+  );
+  ka=2.35+norm*4.69;
+  labline(x,y,x+cos(ka)*(rad-8),y+sin(ka)*(rad-8),0.98,0.95,1,1);
+  labtext(x-rad-7,y-rad-35,title,13,0.88,0.88,0.96);
+  labtext(x-rad-8,y+rad+13,value,13,0.85,0.88,1);
+);
+function labenv(x,y,w,h,aa,dd,ss,rr,ca,cd,cr,green) (
+  // Sustain display has a deliberately visible hold segment.
+  evsecs=max(1.0,(aa+dd+rr)/1000+0.35);
+  evscale=w/evsecs;
+  evax=x+aa/1000*evscale;
+  evdx=evax+dd/1000*evscale;
+  evrx=evdx+0.35*evscale;
+  evend=min(x+w,evrx+rr/1000*evscale);
+  evpb=y+h;
+  p=0;prevx=x;prevy=evpb;
+  loop(180,
+    xx=x+p*w/179;
+    xx<evax ? (t=(xx-x)/max(0.00001,evax-x);value=t^exp(-3*ca);) :
+    xx<evdx ? (t=(xx-evax)/max(0.00001,evdx-evax);value=1-(1-ss)*t^exp(-3*cd);) :
+    xx<evrx ? value=ss :
+    xx<evend ? (t=(xx-evrx)/max(0.00001,evend-evrx);value=ss*(1-t^exp(-3*cr));)
+    : value=0;
+    yy=evpb-h*max(0,min(1,value));
+    p>0 ? labline(prevx,prevy,xx,yy,green?0.28:0.79,green?0.99:0.44,green?0.68:1,1);
+    prevx=xx;prevy=yy;
+    p+=1;
+  );
+  labcirc(evax,y,6,green?0.32:0.88,green?1:0.51,green?0.68:1);
+  labcirc(evdx,evpb-ss*h,6,green?0.32:0.88,green?1:0.51,green?0.68:1);
+  labcirc(evrx,evpb-ss*h,6,green?0.32:0.88,green?1:0.51,green?0.68:1);
+  labcirc(evend,evpb,6,green?0.32:0.88,green?1:0.51,green?0.68:1);
+  // Bend points match the DSP power curve exponent exactly.
+  evax>x+30 ? labcirc((x+evax)*0.5,evpb-h*(0.5^exp(-3*ca)),4,0.63,0.84,0.99);
+  evdx-evax>30 && ss<0.98 ? labcirc((evax+evdx)*0.5,evpb-h*(1-(1-ss)*0.5^exp(-3*cd)),4,0.63,0.84,0.99);
+  evend-evrx>30 && ss>0.02 ? labcirc((evrx+evend)*0.5,evpb-h*ss*(1-0.5^exp(-3*cr)),4,0.63,0.84,0.99);
+);
+function labcommand(n) (
+  gmem[labbase+26]=n;
+  gmem[labbase+27]+=1;
+);
+function labknobdrag(n,x,y,rad) (
+  (mx-x)^2+(my-y)^2 < (rad+6)^2 ? active_knob=n;
+);
+
+ls=min(gfx_w/1080,gfx_h/930);
+ls=max(0.18,ls);
+lx=(gfx_w-1080*ls)*0.5;ly=(gfx_h-930*ls)*0.5;
+mx=(mouse_x-lx)/ls;my=(mouse_y-ly)/ls;
+labbase=(floor(slider11)-1)*3200000;
+mb=(mouse_cap&1)!=0;
+click=mb&&!lab_oldmb;
+
+labfill(0,0,1080,930,0.025,0.034,0.067,1);
+labfill(0,0,1080,80,0.063,0.055,0.10,1);
+labtext(28,18,"MOONAR",36,0.77,0.55,1);
+labtext(232,32,"CURVE LAB  v0.8.1 PREVIEW",16,0.72,0.72,0.87);
+labbutton(496,20,111,43,"SYNTH",labtab==0);
+labbutton(615,20,122,43,"PRESETS",labtab==1);
+labbutton(745,20,151,43,"ADVANCED",labtab==2);
+labbutton(904,20,151,43,"UPDATE",0);
+
+labpanel(24,95,1032,174);
+labtext(42,111,"SAMPLE  /  PCM RESYNTH",17,0.92,0.91,0.98);
+labbutton(43,161,175,41,"LOAD SAMPLE",0);
+has_sample ? (
+  sprintf(#sampdesc,"%.2f s   |   %d partials",nframes/max(1,source_sr),npeak);
+  labtext(50,212,#sampdesc,12,0.57,0.89,0.80);
+) : labtext(50,212,"NO SAMPLE LOADED",12,0.89,0.59,0.64);
+labfill(237,136,791,111,0.018,0.026,0.055,1);
+has_sample ? (
+  i=0;loop(395,
+    from=floor((i/395)*max(1,nframes-1));
+    vmax=0;
+    j=0;loop(5,
+      idx=min(nframes-1,from+j*max(1,floor(nframes/395/5)));
+      vmax=max(vmax,max(abs(samp_l[idx]),abs(samp_r[idx])));
+      j+=1;
+    );
+    h=max(1,min(42,vmax*85));
+    labline(242+i*1.98,191-h,242+i*1.98,191+h,0.68,0.41,0.99,0.87);
+    i+=1;
+  );
+) : labtext(465,181,"LOAD A WAV, AIFF OR FLAC",16,0.54,0.58,0.70);
+
+labtab==0 ? (
+  labpanel(24,282,500,505);
+  labpanel(538,282,518,505);
+  labtext(45,299,"VOLUME  /  AMP ADSR",18,0.89,0.82,1);
+  labfill(43,348,462,238,0.024,0.033,0.072,1);
+  labenv(57,365,431,203,slider1,slider2,10^(slider3/20),slider4,slider24,slider25,slider26,0);
+  sprintf(#a0,"%.0f ms",slider1);
+  sprintf(#d0,"%.0f ms",slider2);
+  sprintf(#s0,"%.1f dB",slider3);
+  sprintf(#r0,"%.0f ms",slider4);
+  labknob(104,690,27,log(1+slider1/100)/log(321),"ATTACK",#a0,0);
+  labknob(224,690,27,log(1+slider2/100)/log(321),"DECAY",#d0,0);
+  labknob(344,690,27,(slider3+48)/48,"SUSTAIN",#s0,0);
+  labknob(464,690,27,log(1+slider4/100)/log(321),"RELEASE",#r0,0);
+
+  labtext(557,299,"MOOG-STYLE  /  24 dB LOWPASS",18,0.91,0.83,1);
+  labbutton(926,294,101,37,slider27>0?"ON":"OFF",slider27>0);
+  sprintf(#cut,"%.0f Hz",slider28);
+  sprintf(#res,"%.2f",slider29);
+  sprintf(#drv,"%.1f dB",slider30);
+  sprintf(#amt,"%+.1f oct",slider31);
+  labknob(620,398,35,log(max(20,slider28)/20)/log(1000),"CUTOFF",#cut,0);
+  labknob(742,398,28,slider29/0.95,"RESONANCE",#res,0);
+  labknob(861,398,28,slider30/18,"DRIVE",#drv,0);
+  labknob(986,398,28,(slider31+6)/12,"ENV AMOUNT",#amt,0);
+
+  labtext(562,480,"FILTER ENVELOPE  /  ADSR",15,0.57,1,0.78);
+  labfill(556,508,482,162,0.019,0.036,0.065,1);
+  labenv(569,519,453,139,slider32,slider33,slider34,slider35,slider36,slider37,slider38,1);
+  sprintf(#fa,"%.0f ms",slider32);
+  sprintf(#fd,"%.0f ms",slider33);
+  sprintf(#fs,"%.2f",slider34);
+  sprintf(#fr,"%.0f ms",slider35);
+  labknob(620,734,21,log(1+slider32/100)/log(321),"A",#fa,1);
+  labknob(745,734,21,log(1+slider33/100)/log(321),"D",#fd,1);
+  labknob(870,734,21,slider34,"S",#fs,1);
+  labknob(989,734,21,log(1+slider35/100)/log(321),"R",#fr,1);
+) : labtab==1 ? (
+  labpanel(24,282,1032,505);
+  labtext(52,305,"MY SOUND PRESETS",22,0.88,0.81,1);
+  labtext(52,359,"Saved sound + source WAV + all DSP settings",15,0.65,0.72,0.85);
+  labbutton(52,414,131,41,"PREVIOUS",0);
+  labbutton(195,414,100,41,"NEXT",0);
+  labbutton(310,414,102,41,"SAVE",0);
+  labbutton(425,414,126,41,"RENAME",0);
+  labbutton(564,414,119,41,"DELETE",0);
+  labtext(52,500,"Current preset:",17,0.73,0.77,0.92);
+  // Shared controller status: names are read from its preset bank.
+  #pname="";
+  j=0;loop(64,
+    ch=floor(gmem[labbase+3000000+j]);
+    ch>0 && ch<256 ? str_setchar(#pname,j,ch);
+    j+=1;
+  );
+  strlen(#pname)>0 ? labtext(230,500,#pname,18,0.83,1,0.79)
+    : labtext(230,500,"(no preset selected)",18,0.58,0.59,0.72);
+  sprintf(#pcnt,"%d presets stored",floor(gmem[labbase+3000065]));
+  labtext(52,548,#pcnt,14,0.61,0.73,0.82);
+  labtext(52,602,"Legacy MOONAR presets are preserved separately.",14,0.70,0.73,0.86);
+  labtext(52,633,"Use IMPORT OLD to copy your previous presets into this lab.",14,0.70,0.73,0.86);
+  labbutton(52,693,184,43,"IMPORT OLD",0);
+) : (
+  labpanel(24,282,1032,505);
+  labtext(48,301,"ADVANCED / ORIGINAL MOONAR ENGINE",20,0.91,0.85,1);
+  labtext(48,350,"All original 26 parameters are retained, in their original order.",16,0.75,0.78,0.90);
+  labtext(48,387,"Use REAPER FX parameters / automation lanes for the full settings.",15,0.67,0.75,0.88);
+  labtext(48,440,"Sustain engine: Natural PCM Loop / Spectral",15,0.78,0.83,0.93);
+  labbutton(47,481,206,41,slider23<0.5?"NATURAL LOOP":"SPECTRAL",1);
+  labbutton(267,481,160,41,slider6<=1?"MONO":"POLY",1);
+  labbutton(440,481,155,41,slider13>0?"LEGATO ON":"LEGATO OFF",slider13>0);
+  labtext(47,574,"NOISE, MOTION, GLIDE and trim remain in the REAPER parameter list.",14,0.67,0.73,0.87);
+);
+labpanel(24,803,1032,110);
+labtext(45,821,"PITCH / TUNING",14,0.82,0.77,0.96);
+sprintf(#trans,"%+.0f st",slider39);
+sprintf(#fine,"%+.0f ct",slider8*100);
+sprintf(#vol,"%+.1f dB",slider5);
+labknob(380,864,18,(slider39+24)/48,"TRANSPOSE",#trans,0);
+labknob(583,864,18,(slider8+12)/24,"DETUNE",#fine,0);
+labknob(944,864,24,(slider5+36)/48,"OUTPUT",#vol,0);
+labtext(45,863,slider23<0.5?"NATURAL PCM":"SPECTRAL",15,0.75,0.88,0.86);
+labtext(45,887,slider6<=1?"MONO":"POLY",13,0.68,0.73,0.85);
+gmem[labbase+28]>0 ? labtext(721,828,"CONTROLLER CONNECTED",12,0.50,0.89,0.68)
+  : labtext(721,828,"RUN LAB LUA CONTROLLER",12,0.94,0.66,0.47);
+
+// Keep click behavior tied to visible controls and actual slider indices.
+click ? (
+  active_knob=0;mouse_start_y=my;
+  labtab==0 ? (
+    labknobdrag(1,104,690,27);
+    labknobdrag(2,224,690,27);
+    labknobdrag(3,344,690,27);
+    labknobdrag(4,464,690,27);
+    labknobdrag(28,620,398,35);
+    labknobdrag(29,742,398,28);
+    labknobdrag(30,861,398,28);
+    labknobdrag(31,986,398,28);
+    labknobdrag(32,620,734,21);
+    labknobdrag(33,745,734,21);
+    labknobdrag(34,870,734,21);
+    labknobdrag(35,989,734,21);
+    mx>926 && mx<1027 && my>294 && my<331 ? (slider27=1-slider27;sliderchange(2^26);slider_automate(2^26););
+    // Graph handles use the SAME coordinates and power curves as the renderer.
+    my>350 && my<588 && mx>45 && mx<510 ? (
+      asc=431/max(1,(slider1+slider2+slider4)/1000+0.35);
+      ax=57+slider1/1000*asc;
+      dx=ax+slider2/1000*asc;
+      rx=dx+0.35*asc;
+      ex=min(488,rx+slider4/1000*asc);
+      sus=10^(slider3/20);
+      ay=365;dy=568-sus*203;
+      // Mid-curve handles take priority when close to an ADSR stage marker.
+      abs(mx-(57+ax)*0.5)<11 && abs(my-(568-203*0.5^exp(-3*slider24)))<13 ? active_knob=43 :
+      abs(mx-(ax+dx)*0.5)<11 && abs(my-(568-203*(1-(1-sus)*0.5^exp(-3*slider25))))<13 ? active_knob=44 :
+      abs(mx-(rx+ex)*0.5)<11 && abs(my-(568-203*sus*(1-0.5^exp(-3*slider26))))<13 ? active_knob=46 :
+      abs(mx-ax)<15 && abs(my-ay)<18 ? active_knob=40 :
+      abs(mx-dx)<15 && abs(my-dy)<18 ? active_knob=41 :
+      abs(mx-ex)<15 && abs(my-568)<18 ? active_knob=42 :
+      mx>dx && mx<rx && abs(my-dy)<16 ? active_knob=45;
+    );
+    my>508 && my<670 && mx>556 && mx<1041 ? (
+      fsc=453/max(1,(slider32+slider33+slider35)/1000+0.35);
+      fax=569+slider32/1000*fsc;
+      fdx=fax+slider33/1000*fsc;
+      frx=fdx+0.35*fsc;
+      fex=min(1022,frx+slider35/1000*fsc);
+      fdy=658-slider34*139;
+      abs(mx-(569+fax)*0.5)<11 && abs(my-(658-139*0.5^exp(-3*slider36)))<13 ? active_knob=53 :
+      abs(mx-(fax+fdx)*0.5)<11 && abs(my-(658-139*(1-(1-slider34)*0.5^exp(-3*slider37))))<13 ? active_knob=54 :
+      abs(mx-(frx+fex)*0.5)<11 && abs(my-(658-139*slider34*(1-0.5^exp(-3*slider38))))<13 ? active_knob=56 :
+      abs(mx-fax)<15 && abs(my-519)<18 ? active_knob=50 :
+      abs(mx-fdx)<15 && abs(my-fdy)<18 ? active_knob=51 :
+      abs(mx-fex)<15 && abs(my-658)<18 ? active_knob=52 :
+      mx>fdx && mx<frx && abs(my-fdy)<16 ? active_knob=55;
+    );
+  );
+  labknobdrag(39,380,864,18);
+  labknobdrag(8,583,864,18);
+  labknobdrag(5,944,864,24);
+  mx>496 && mx<607 && my>20 && my<63 ? labtab=0;
+  mx>615 && mx<737 && my>20 && my<63 ? labtab=1;
+  mx>745 && mx<896 && my>20 && my<63 ? labtab=2;
+  mx>904 && mx<1055 && my>20 && my<63 ? labcommand(5);
+  mx>43 && mx<218 && my>161 && my<202 ? labcommand(1);
+  labtab==1 && my>414 && my<455 ? (
+    mx>52 && mx<183 ? labcommand(3);
+    mx>195 && mx<295 ? labcommand(4);
+    mx>310 && mx<412 ? labcommand(2);
+    mx>425 && mx<551 ? labcommand(6);
+    mx>564 && mx<683 ? labcommand(7);
+  );
+  labtab==1 && mx>52 && mx<236 && my>693 && my<736 ? labcommand(8);
+  labtab==2 && my>481 && my<522 ? (
+    mx>47 && mx<253 ? (slider23=1-slider23;sliderchange(2^22);slider_automate(2^22););
+    mx>267 && mx<427 ? (slider6=slider6<=1?4:1;sliderchange(2^5);slider_automate(2^5););
+    mx>440 && mx<595 ? (slider13=1-slider13;sliderchange(2^12);slider_automate(2^12););
+  );
+  drag_initial=0;
+  active_knob==1 ? drag_initial=log(1+slider1/100)/log(321);
+  active_knob==2 ? drag_initial=log(1+slider2/100)/log(321);
+  active_knob==3 ? drag_initial=(slider3+48)/48;
+  active_knob==4 ? drag_initial=log(1+slider4/100)/log(321);
+  active_knob==28 ? drag_initial=log(max(20,slider28)/20)/log(1000);
+  active_knob==29 ? drag_initial=slider29/0.95;
+  active_knob==30 ? drag_initial=slider30/18;
+  active_knob==31 ? drag_initial=(slider31+6)/12;
+  active_knob==32 ? drag_initial=log(1+slider32/100)/log(321);
+  active_knob==33 ? drag_initial=log(1+slider33/100)/log(321);
+  active_knob==34 ? drag_initial=slider34;
+  active_knob==35 ? drag_initial=log(1+slider35/100)/log(321);
+  active_knob==39 ? drag_initial=(slider39+24)/48;
+  active_knob==8 ? drag_initial=(slider8+12)/24;
+  active_knob==5 ? drag_initial=(slider5+36)/48;
+);
+mb && active_knob>0 ? (
+  norm=max(0,min(1,drag_initial+(mouse_start_y-my)/210));
+  active_knob==1 ? slider1=100*(321^norm-1);
+  active_knob==2 ? slider2=100*(321^norm-1);
+  active_knob==3 ? slider3=-48+48*norm;
+  active_knob==4 ? slider4=100*(321^norm-1);
+  active_knob==28 ? slider28=20*1000^norm;
+  active_knob==29 ? slider29=0.95*norm;
+  active_knob==30 ? slider30=18*norm;
+  active_knob==31 ? slider31=-6+12*norm;
+  active_knob==32 ? slider32=100*(321^norm-1);
+  active_knob==33 ? slider33=100*(321^norm-1);
+  active_knob==34 ? slider34=norm;
+  active_knob==35 ? slider35=100*(321^norm-1);
+  active_knob==39 ? slider39=floor(-24+48*norm+0.5);
+  active_knob==8 ? slider8=-12+24*norm;
+  active_knob==5 ? slider5=-36+48*norm;
+  // Stage points update timing and sustain. Mid-segment bend points update
+  // the same exponent that the DSP applies, not a cosmetic Bezier.
+  asc=431/max(1,(slider1+slider2+slider4)/1000+0.35);
+  ax=57+slider1/1000*asc;
+  dx=ax+slider2/1000*asc;
+  rx=dx+0.35*asc;
+  fsc=453/max(1,(slider32+slider33+slider35)/1000+0.35);
+  fax=569+slider32/1000*fsc;
+  fdx=fax+slider33/1000*fsc;
+  frx=fdx+0.35*fsc;
+  active_knob==40 ? slider1=max(0,min(32000,(mx-57)/asc*1000));
+  active_knob==41 ? slider2=max(0,min(32000,(mx-ax)/asc*1000));
+  active_knob==42 ? slider4=max(0,min(32000,(mx-rx)/asc*1000));
+  active_knob==50 ? slider32=max(0,min(32000,(mx-569)/fsc*1000));
+  active_knob==51 ? slider33=max(0,min(32000,(mx-fax)/fsc*1000));
+  active_knob==52 ? slider35=max(0,min(32000,(mx-frx)/fsc*1000));
+  active_knob==45 ? slider3=max(-48,min(0,20*log(max(0.003981,(568-my)/203))/log(10)));
+  active_knob==55 ? slider34=max(0,min(1,(658-my)/139));
+  active_knob==43 ? (
+    bendLevel=max(0.000001,min(0.999999,(568-my)/203));
+    powval=log(bendLevel)/log(0.5);
+    slider24=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==44 ? (
+    sus=10^(slider3/20);
+    bendLevel=max(0.000001,min(0.999999,(1-(568-my)/203)/max(0.000001,1-sus)));
+    powval=log(bendLevel)/log(0.5);
+    slider25=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==46 ? (
+    sus=10^(slider3/20);
+    bendLevel=max(0.000001,min(0.999999,1-((568-my)/203)/max(0.000001,sus)));
+    powval=log(bendLevel)/log(0.5);
+    slider26=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==53 ? (
+    bendLevel=max(0.000001,min(0.999999,(658-my)/139));
+    powval=log(bendLevel)/log(0.5);
+    slider36=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==54 ? (
+    bendLevel=max(0.000001,min(0.999999,(1-(658-my)/139)/max(0.000001,1-slider34)));
+    powval=log(bendLevel)/log(0.5);
+    slider37=max(-1,min(1,-log(powval)/3));
+  );
+  active_knob==56 ? (
+    bendLevel=max(0.000001,min(0.999999,1-((658-my)/139)/max(0.000001,slider34)));
+    powval=log(bendLevel)/log(0.5);
+    slider38=max(-1,min(1,-log(powval)/3));
+  );
+  // Notify REAPER that these visual edits are actual automatable parameters.
+  active_knob==1 || active_knob==40 ? sliderchange(2^0);
+  active_knob==2 || active_knob==41 ? sliderchange(2^1);
+  active_knob==3 || active_knob==45 ? sliderchange(2^2);
+  active_knob==4 || active_knob==42 ? sliderchange(2^3);
+  active_knob==5 ? sliderchange(2^4);
+  active_knob==8 ? sliderchange(2^7);
+  active_knob==28 ? sliderchange(2^27);
+  active_knob==29 ? sliderchange(2^28);
+  active_knob==30 ? sliderchange(2^29);
+  active_knob==31 ? sliderchange(2^30);
+  active_knob==32 || active_knob==50 ? sliderchange(2^31);
+  active_knob==33 || active_knob==51 ? sliderchange(-1);
+  active_knob==34 || active_knob==55 ? sliderchange(-1);
+  active_knob==35 || active_knob==52 ? sliderchange(-1);
+  active_knob==39 ? sliderchange(-1);
+  active_knob==43 ? sliderchange(2^23);
+  active_knob==44 ? sliderchange(2^24);
+  active_knob==46 ? sliderchange(2^25);
+  active_knob==53 ? sliderchange(-1);
+  active_knob==54 ? sliderchange(-1);
+  active_knob==56 ? sliderchange(-1);
+);
+!mb ? active_knob=0;
+lab_oldmb=mb;
+gfx_getchar();
